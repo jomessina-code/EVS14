@@ -86,6 +86,7 @@ const App: React.FC = () => {
   const [loadingState, setLoadingState] = useState({ progress: 0, message: '' });
 
   const [isKeyReady, setIsKeyReady] = useState(false);
+  const [platformApiReady, setPlatformApiReady] = useState<boolean | null>(null);
 
   const isLoading = isGenerating || isModifying || isGeneratingAdaptations || isAssistantResponding || isSuggestingPreset;
   
@@ -95,18 +96,33 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    const checkKey = async () => {
-      // @ts-ignore - aistudio is globally available in the platform environment
-      if (window.aistudio && await window.aistudio.hasSelectedApiKey()) {
-        setIsKeyReady(true);
+    const checkKeyAndApi = async () => {
+      try {
+        // @ts-ignore
+        if (window.aistudio && typeof window.aistudio.hasSelectedApiKey === 'function' && typeof window.aistudio.openSelectKey === 'function') {
+          setPlatformApiReady(true);
+          // @ts-ignore
+          if (await window.aistudio.hasSelectedApiKey()) {
+            setIsKeyReady(true);
+          } else {
+            setIsKeyReady(false);
+          }
+        } else {
+          setPlatformApiReady(false);
+          setIsKeyReady(false); // Can't be ready if API is not there
+        }
+      } catch (e) {
+        console.error("Error checking for API key readiness:", e);
+        setPlatformApiReady(false);
+        setIsKeyReady(false);
       }
     };
-    checkKey();
+    checkKeyAndApi();
   }, []);
 
   const handleKeySelection = async () => {
     // @ts-ignore
-    if (window.aistudio) {
+    if (window.aistudio && typeof window.aistudio.openSelectKey === 'function') {
         try {
             // @ts-ignore
             await window.aistudio.openSelectKey();
@@ -115,7 +131,7 @@ const App: React.FC = () => {
             setIsKeyReady(true);
         } catch (e) {
             console.error("Key selection was cancelled or failed.", e);
-            showToast("La sélection de la clé API a été annulée.");
+            showToast("La sélection de la clé API a été annulée ou a échoué.");
         }
     } else {
         showToast("L'environnement de sélection de clé n'est pas disponible.");
@@ -695,8 +711,12 @@ const App: React.FC = () => {
     }
   };
 
+  if (platformApiReady === null) {
+    return <LoadingPanel progress={50} message="Vérification de l'environnement..." />;
+  }
+
   if (!isKeyReady) {
-    return <SelectApiKeyPanel onSelectKey={handleKeySelection} />;
+    return <SelectApiKeyPanel onSelectKey={handleKeySelection} platformApiReady={platformApiReady} />;
   }
 
   return (
