@@ -15,10 +15,10 @@ const ApiKeyErrorPanel: React.FC = () => {
         <h1 className="text-3xl font-bold text-red-400 font-orbitron mb-4">Configuration Requise</h1>
         <div className="bg-black/20 p-6 rounded-lg border border-red-800/50 space-y-4">
           <p className="text-lg text-gray-300">
-            La clé d'API pour le service Gemini est manquante.
+            La clé d'API pour le service Gemini est manquante ou invalide.
           </p>
           <p className="text-gray-400">
-            Pour que l'application fonctionne, vous devez configurer la variable d'environnement <code className="bg-gray-700 text-purple-300 px-2 py-1 rounded-md text-sm">API_KEY</code> dans les paramètres de votre projet sur Vercel.
+            Pour que l'application fonctionne, vous devez configurer la variable d'environnement <code className="bg-gray-700 text-purple-300 px-2 py-1 rounded-md text-sm">API_KEY</code> dans les paramètres de votre projet sur votre plateforme d'hébergement (par ex. Vercel).
           </p>
           <div>
             <a 
@@ -27,11 +27,11 @@ const ApiKeyErrorPanel: React.FC = () => {
               rel="noopener noreferrer"
               className="inline-block bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded-lg transition"
             >
-              Consulter la documentation Vercel
+              Voir la documentation Vercel
             </a>
           </div>
           <p className="text-xs text-gray-500 pt-4">
-            Cette page est affichée car la variable <code className="bg-gray-700 text-gray-400 px-1 rounded-sm">process.env.API_KEY</code> n'a pas été trouvée.
+            Après avoir ajouté la clé, n'oubliez pas de redéployer votre application.
           </p>
         </div>
       </div>

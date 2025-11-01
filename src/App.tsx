@@ -10,6 +10,7 @@ import FormatManager from './components/FormatManager';
 import PromptEditorModal from './components/ControlsPanel/PromptEditorModal';
 import PricingModal from './components/PricingModal'; // Import the new modal
 import SelectApiKeyPanel from './components/SelectApiKeyPanel';
+import ApiKeyErrorPanel from './components/ApiKeyErrorPanel';
 import type { EsportPromptOptions, QualityCheckResults, GenerationHistoryItem, UniverseId, Format, DerivedImage, ChatMessage, UniversePreset, TextConfig, TextStyle } from './types';
 import { generateEsportImage, adaptEsportImage, generateEsportPrompt, refinePrompt, suggestUniversePreset, verifyNoMargins, verifyTextFidelity, addTextToImage, determineTextStyle } from './services/geminiService';
 import { UNIVERSE_PRESETS } from './constants/options';
@@ -86,7 +87,7 @@ const App: React.FC = () => {
   const [loadingState, setLoadingState] = useState({ progress: 0, message: '' });
 
   const [isKeyReady, setIsKeyReady] = useState(false);
-  const [platformApiReady, setPlatformApiReady] = useState<boolean | null>(null);
+  const [isAiStudioEnv, setIsAiStudioEnv] = useState<boolean | null>(null);
 
   const isLoading = isGenerating || isModifying || isGeneratingAdaptations || isAssistantResponding || isSuggestingPreset;
   
@@ -96,28 +97,28 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    const checkKeyAndApi = async () => {
-      try {
-        // @ts-ignore
-        if (window.aistudio && typeof window.aistudio.hasSelectedApiKey === 'function' && typeof window.aistudio.openSelectKey === 'function') {
-          setPlatformApiReady(true);
-          // @ts-ignore
-          if (await window.aistudio.hasSelectedApiKey()) {
-            setIsKeyReady(true);
-          } else {
+    const checkEnvironmentAndKey = async () => {
+      // @ts-ignore
+      const isAiStudio = window.aistudio && typeof window.aistudio.hasSelectedApiKey === 'function';
+      setIsAiStudioEnv(isAiStudio);
+
+      if (isAiStudio) {
+        try {
+            // @ts-ignore
+            const hasKey = await window.aistudio.hasSelectedApiKey();
+            setIsKeyReady(hasKey);
+        } catch (e) {
+            console.error("Error checking AI Studio key:", e);
             setIsKeyReady(false);
-          }
-        } else {
-          setPlatformApiReady(false);
-          setIsKeyReady(false); // Can't be ready if API is not there
         }
-      } catch (e) {
-        console.error("Error checking for API key readiness:", e);
-        setPlatformApiReady(false);
-        setIsKeyReady(false);
+      } else {
+        // Standard environment like Vercel. The key comes from env vars.
+        // A service call will fail if it's missing, which will set isKeyReady to false.
+        const hasKey = !!process.env.API_KEY;
+        setIsKeyReady(hasKey);
       }
     };
-    checkKeyAndApi();
+    checkEnvironmentAndKey();
   }, []);
 
   const handleKeySelection = async () => {
@@ -433,7 +434,7 @@ const App: React.FC = () => {
         } catch (err: unknown) {
             const errorMessage = err instanceof Error ? err.message : "Erreur lors de la génération du visuel.";
             if (errorMessage === 'API_KEY_INVALID') {
-                showToast("❌ Clé API invalide ou non autorisée. Veuillez en sélectionner une nouvelle.");
+                showToast("❌ Clé API manquante, invalide ou non autorisée. Veuillez vérifier votre configuration.");
                 setIsKeyReady(false);
             } else {
                 showToast(`❌ Erreur: ${errorMessage}`);
@@ -711,12 +712,16 @@ const App: React.FC = () => {
     }
   };
 
-  if (platformApiReady === null) {
+  if (isAiStudioEnv === null) {
     return <LoadingPanel progress={50} message="Vérification de l'environnement..." />;
   }
 
   if (!isKeyReady) {
-    return <SelectApiKeyPanel onSelectKey={handleKeySelection} platformApiReady={platformApiReady} />;
+    if (isAiStudioEnv) {
+        return <SelectApiKeyPanel onSelectKey={handleKeySelection} />;
+    } else {
+        return <ApiKeyErrorPanel />;
+    }
   }
 
   return (
