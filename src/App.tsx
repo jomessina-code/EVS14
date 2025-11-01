@@ -1,4 +1,5 @@
 
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import ControlsPanel from './components/ControlsPanel/ControlsPanel';
 import WelcomePanel from './components/WelcomePanel';
@@ -644,9 +645,10 @@ const App: React.FC = () => {
     }
   };
   
-  if (!process.env.API_KEY) {
-    return <ApiKeyErrorPanel />;
-  }
+  // This check is removed to allow the app to load and handle API key errors at runtime.
+  // if (!process.env.API_KEY) {
+  //   return <ApiKeyErrorPanel />;
+  // }
 
   return (
     <div className="relative h-screen bg-gray-900 text-white font-inter overflow-hidden">

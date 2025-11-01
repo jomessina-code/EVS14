@@ -1,4 +1,5 @@
 
+
 import { GoogleGenAI, Modality, Type } from "@google/genai";
 import type { EsportPromptOptions, UniverseId, Format, UniversePreset, GameType, GraphicStyle, Ambiance, VisualElements, TextStyle } from "../types";
 import { GAME_TYPES, GRAPHIC_STYLES, AMBIANCES, VISUAL_ELEMENTS } from "../constants/options";
@@ -7,10 +8,23 @@ import { GAME_TYPES, GRAPHIC_STYLES, AMBIANCES, VISUAL_ELEMENTS } from "../const
 const getApiKey = () => {
     const apiKey = process.env.API_KEY;
     if (!apiKey) {
+        // This error will be caught by the calling function's try/catch block.
         throw new Error("API_KEY environment variable is not set.");
     }
     return apiKey;
 };
+
+const handleApiError = (error: unknown, functionName: string): never => {
+    console.error(`Error in ${functionName}:`, error);
+    if (error instanceof Error) {
+        if (error.message.includes("API_KEY") || error.message.toLowerCase().includes("authentication") || error.message.toLowerCase().includes("api key not valid")) {
+            throw new Error("La clé d'API est manquante, invalide ou non autorisée. Veuillez vérifier votre configuration sur Vercel et vous assurer que la facturation est activée sur votre compte Google AI Studio, puis redéployez.");
+        }
+        throw new Error(`Erreur Gemini: ${error.message}`);
+    }
+    throw new Error("Une erreur inconnue est survenue lors de la communication avec l'API.");
+};
+
 
 // ==================================
 // PROMPT GENERATION LOGIC
@@ -305,26 +319,26 @@ Failure to precisely follow the user's mandate is a critical failure of the task
 // ==================================
 
 export const verifyTextFidelity = async (imageBase64: string, expectedText: string): Promise<boolean> => {
-    const ai = new GoogleGenAI({ apiKey: getApiKey() });
-    const imagePart = { inlineData: { mimeType: 'image/png', data: imageBase64 } };
+    try {
+        const ai = new GoogleGenAI({ apiKey: getApiKey() });
+        const imagePart = { inlineData: { mimeType: 'image/png', data: imageBase64 } };
 
-    if (!expectedText.trim()) {
-        // Case 1: No text is expected. Verify ABSENCE of text.
-        const textPart = {
-            text: `
-            Analyze the provided image. Your task is to determine if there is ANY text, letters, or numbers visible anywhere in the image.
-            Respond in JSON format according to this schema: {"hasText": boolean}.
-            - Set "hasText" to true if you find any readable text.
-            - Set "hasText" to false if the image is purely graphical and contains no text.
-            `
-        };
-        const schema = {
-            type: Type.OBJECT,
-            properties: { hasText: { type: Type.BOOLEAN, description: "True if any text is found." } },
-            required: ["hasText"]
-        };
+        if (!expectedText.trim()) {
+            // Case 1: No text is expected. Verify ABSENCE of text.
+            const textPart = {
+                text: `
+                Analyze the provided image. Your task is to determine if there is ANY text, letters, or numbers visible anywhere in the image.
+                Respond in JSON format according to this schema: {"hasText": boolean}.
+                - Set "hasText" to true if you find any readable text.
+                - Set "hasText" to false if the image is purely graphical and contains no text.
+                `
+            };
+            const schema = {
+                type: Type.OBJECT,
+                properties: { hasText: { type: Type.BOOLEAN, description: "True if any text is found." } },
+                required: ["hasText"]
+            };
 
-        try {
             const response = await ai.models.generateContent({
                 model: 'gemini-2.5-pro',
                 contents: { parts: [imagePart, textPart] },
@@ -337,43 +351,39 @@ export const verifyTextFidelity = async (imageBase64: string, expectedText: stri
             const result = JSON.parse(response.text.trim());
             console.log("Text Absence Verification:", { hasText: result.hasText });
             return !result.hasText; // Return true if it has NO text.
-        } catch (error) {
-            console.error("Error during text absence verification:", error);
-            return false; // Fail safe
-        }
-    } else {
-        // Case 2: Text is expected. Verify FIDELITY.
-        const textPart = {
-            text: `
-            Analyze the image and extract ALL visible text. Compare the extracted text with the "expected text" provided below.
-            
-            Expected Text: "${expectedText}"
-            
-            Your task is to determine if the text in the image is a perfect, character-for-character match with the expected text.
-            - Punctuation, capitalization, and spacing must be identical.
-            - The order must be the same.
-            - No words should be added or omitted.
 
-            Respond in JSON format according to the schema. The 'isPerfectMatch' property should be true only if the text is identical.
-            `
-        };
-        
-        const schema = {
-            type: Type.OBJECT,
-            properties: {
-                isPerfectMatch: { 
-                    type: Type.BOOLEAN,
-                    description: "True if the text in the image is a perfect match, false otherwise."
+        } else {
+            // Case 2: Text is expected. Verify FIDELITY.
+            const textPart = {
+                text: `
+                Analyze the image and extract ALL visible text. Compare the extracted text with the "expected text" provided below.
+                
+                Expected Text: "${expectedText}"
+                
+                Your task is to determine if the text in the image is a perfect, character-for-character match with the expected text.
+                - Punctuation, capitalization, and spacing must be identical.
+                - The order must be the same.
+                - No words should be added or omitted.
+
+                Respond in JSON format according to the schema. The 'isPerfectMatch' property should be true only if the text is identical.
+                `
+            };
+            
+            const schema = {
+                type: Type.OBJECT,
+                properties: {
+                    isPerfectMatch: { 
+                        type: Type.BOOLEAN,
+                        description: "True if the text in the image is a perfect match, false otherwise."
+                    },
+                    extractedText: {
+                        type: Type.STRING,
+                        description: "The text you extracted from the image."
+                    }
                 },
-                extractedText: {
-                    type: Type.STRING,
-                    description: "The text you extracted from the image."
-                }
-            },
-            required: ["isPerfectMatch", "extractedText"]
-        };
+                required: ["isPerfectMatch", "extractedText"]
+            };
 
-        try {
             const response = await ai.models.generateContent({
                 model: 'gemini-2.5-pro',
                 contents: { parts: [imagePart, textPart] },
@@ -387,53 +397,52 @@ export const verifyTextFidelity = async (imageBase64: string, expectedText: stri
             const result = JSON.parse(response.text.trim());
             console.log("Text Fidelity Verification:", { expected: expectedText, extracted: result.extractedText, match: result.isPerfectMatch });
             return result.isPerfectMatch;
-        } catch (error) {
-            console.error("Error during text fidelity verification:", error);
-            return false; // Fail safe
         }
+    } catch (error) {
+        handleApiError(error, 'verifyTextFidelity');
     }
 };
 
 export const verifyNoMargins = async (imageBase64: string): Promise<boolean> => {
-    const ai = new GoogleGenAI({ apiKey: getApiKey() });
-    
-    const imagePart = {
-        inlineData: { mimeType: 'image/png', data: imageBase64 },
-    };
-    const textPart = {
-        text: `
-        CRITICAL ANALYSIS TASK: IMAGE BORDER DETECTION.
-
-        You are a precision quality control tool. Your ONLY task is to determine if the provided image is "full bleed" (the content extends to all four edges) or if it has any margins or borders.
-        
-        **DEFINITIONS:**
-        - **Full Bleed / No Margins:** The artwork, colors, and textures of the image continue to the absolute edge of the canvas on all four sides (top, bottom, left, right). There is no padding or empty space.
-        - **Margins / Borders:** Any solid-colored or patterned band that is distinct from the main artwork and runs along one or more edges of the image. This includes white, black, or any other color of border. Even a 1-pixel wide border is considered a margin.
-        
-        **INSTRUCTIONS:**
-        1.  Scrutinize all four edges of the image.
-        2.  Compare the edge pixels to the adjacent artwork. Is there an abrupt, uniform line indicating a border?
-        3.  Respond ONLY with JSON according to the provided schema.
-        4.  Your analysis must be extremely accurate. A false negative (saying there are no margins when there are) is a critical failure.
-        
-        **JSON Schema:**
-        Respond with {"hasMargins": true} if you detect ANY border on ANY side.
-        Respond with {"hasMargins": false} ONLY if the artwork is perfectly full bleed.
-        `
-    };
-
-    const schema = {
-        type: Type.OBJECT,
-        properties: {
-            hasMargins: { 
-                type: Type.BOOLEAN,
-                description: "True if the image has solid-colored borders, false otherwise."
-            }
-        },
-        required: ["hasMargins"]
-    };
-
     try {
+        const ai = new GoogleGenAI({ apiKey: getApiKey() });
+        
+        const imagePart = {
+            inlineData: { mimeType: 'image/png', data: imageBase64 },
+        };
+        const textPart = {
+            text: `
+            CRITICAL ANALYSIS TASK: IMAGE BORDER DETECTION.
+
+            You are a precision quality control tool. Your ONLY task is to determine if the provided image is "full bleed" (the content extends to all four edges) or if it has any margins or borders.
+            
+            **DEFINITIONS:**
+            - **Full Bleed / No Margins:** The artwork, colors, and textures of the image continue to the absolute edge of the canvas on all four sides (top, bottom, left, right). There is no padding or empty space.
+            - **Margins / Borders:** Any solid-colored or patterned band that is distinct from the main artwork and runs along one or more edges of the image. This includes white, black, or any other color of border. Even a 1-pixel wide border is considered a margin.
+            
+            **INSTRUCTIONS:**
+            1.  Scrutinize all four edges of the image.
+            2.  Compare the edge pixels to the adjacent artwork. Is there an abrupt, uniform line indicating a border?
+            3.  Respond ONLY with JSON according to the provided schema.
+            4.  Your analysis must be extremely accurate. A false negative (saying there are no margins when there are) is a critical failure.
+            
+            **JSON Schema:**
+            Respond with {"hasMargins": true} if you detect ANY border on ANY side.
+            Respond with {"hasMargins": false} ONLY if the artwork is perfectly full bleed.
+            `
+        };
+
+        const schema = {
+            type: Type.OBJECT,
+            properties: {
+                hasMargins: { 
+                    type: Type.BOOLEAN,
+                    description: "True if the image has solid-colored borders, false otherwise."
+                }
+            },
+            required: ["hasMargins"]
+        };
+
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-pro',
             contents: { parts: [imagePart, textPart] },
@@ -453,9 +462,7 @@ export const verifyNoMargins = async (imageBase64: string): Promise<boolean> => 
         return !hasMargins;
 
     } catch (error) {
-        console.error("Error during margin verification:", error);
-        // Fail safe: assume margins are NOT ok to avoid user frustration
-        return false;
+        handleApiError(error, 'verifyNoMargins');
     }
 };
 
@@ -465,32 +472,32 @@ export const verifyNoMargins = async (imageBase64: string): Promise<boolean> => 
 // ==================================
 
 export const determineTextStyle = async (imageBase64: string): Promise<TextStyle> => {
-    const ai = new GoogleGenAI({ apiKey: getApiKey() });
-    const imagePart = { inlineData: { mimeType: 'image/png', data: imageBase64 } };
-    
-    const prompt = `
-    You are an expert graphic designer AI. Analyze the provided image for an esports event.
-    Your task is to determine the optimal typography style for text overlays. The style must be modern, high-impact, and perfectly integrated with the image's art direction.
-
-    **Analysis:**
-    1.  **Font Family:** Suggest a bold, modern, sans-serif font family suitable for esports. Examples: 'Orbitron', 'Teko', 'Exo 2', 'Rajdhani'. Choose one that matches the image's theme (e.g., futuristic, fantasy, minimalist).
-    2.  **Color:** Sample colors from the image. Select a primary text color that is bright, energetic, and has the highest possible contrast and readability against the typical text placement areas (top and bottom thirds). Provide this as a hex code (e.g., "#FFFFFF").
-    3.  **Effect:** Describe a simple, clean, and professional text effect that enhances readability without being distracting. This should be a concise instruction. Examples: "A subtle white outer glow.", "A tight, dark drop shadow (offset 2px).", "A sharp, dark purple outline (2px width)."
-
-    Respond ONLY with a valid JSON object matching the schema. Do not include any markdown or extra text.
-    `;
-
-    const schema = {
-        type: Type.OBJECT,
-        properties: {
-            fontFamily: { type: Type.STRING, description: "Suggested font family name." },
-            color: { type: Type.STRING, description: "The hex color code for the text." },
-            effect: { type: Type.STRING, description: "A concise description of the text effect." }
-        },
-        required: ["fontFamily", "color", "effect"]
-    };
-
     try {
+        const ai = new GoogleGenAI({ apiKey: getApiKey() });
+        const imagePart = { inlineData: { mimeType: 'image/png', data: imageBase64 } };
+        
+        const prompt = `
+        You are an expert graphic designer AI. Analyze the provided image for an esports event.
+        Your task is to determine the optimal typography style for text overlays. The style must be modern, high-impact, and perfectly integrated with the image's art direction.
+
+        **Analysis:**
+        1.  **Font Family:** Suggest a bold, modern, sans-serif font family suitable for esports. Examples: 'Orbitron', 'Teko', 'Exo 2', 'Rajdhani'. Choose one that matches the image's theme (e.g., futuristic, fantasy, minimalist).
+        2.  **Color:** Sample colors from the image. Select a primary text color that is bright, energetic, and has the highest possible contrast and readability against the typical text placement areas (top and bottom thirds). Provide this as a hex code (e.g., "#FFFFFF").
+        3.  **Effect:** Describe a simple, clean, and professional text effect that enhances readability without being distracting. This should be a concise instruction. Examples: "A subtle white outer glow.", "A tight, dark drop shadow (offset 2px).", "A sharp, dark purple outline (2px width)."
+
+        Respond ONLY with a valid JSON object matching the schema. Do not include any markdown or extra text.
+        `;
+
+        const schema = {
+            type: Type.OBJECT,
+            properties: {
+                fontFamily: { type: Type.STRING, description: "Suggested font family name." },
+                color: { type: Type.STRING, description: "The hex color code for the text." },
+                effect: { type: Type.STRING, description: "A concise description of the text effect." }
+            },
+            required: ["fontFamily", "color", "effect"]
+        };
+
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-pro',
             contents: { parts: [imagePart, { text: prompt }] },
@@ -502,13 +509,7 @@ export const determineTextStyle = async (imageBase64: string): Promise<TextStyle
         });
         return JSON.parse(response.text.trim());
     } catch (error) {
-        console.error("Error determining text style:", error);
-        // Fallback to a safe default
-        return {
-            fontFamily: "Orbitron",
-            color: "#FFFFFF",
-            effect: "A subtle dark drop shadow."
-        };
+        handleApiError(error, 'determineTextStyle');
     }
 };
 
@@ -517,23 +518,23 @@ export const generateEsportImage = async (
     allPresets: UniversePreset[],
     promptOverride?: string
 ): Promise<{ imageBase64: string; prompt: string; textVerified: boolean; marginsVerified: boolean }> => {
-    const ai = new GoogleGenAI({ apiKey: getApiKey() });
-    
-    const prompt = promptOverride || generateEsportPrompt(options, allPresets);
-    
-    const textPart = { text: prompt };
-    const parts: any[] = [textPart];
-    
-    if (options.inspirationImage) {
-        parts.unshift({
-            inlineData: {
-                mimeType: options.inspirationImage.mimeType,
-                data: options.inspirationImage.base64,
-            },
-        });
-    }
-
     try {
+        const ai = new GoogleGenAI({ apiKey: getApiKey() });
+        
+        const prompt = promptOverride || generateEsportPrompt(options, allPresets);
+        
+        const textPart = { text: prompt };
+        const parts: any[] = [textPart];
+        
+        if (options.inspirationImage) {
+            parts.unshift({
+                inlineData: {
+                    mimeType: options.inspirationImage.mimeType,
+                    data: options.inspirationImage.base64,
+                },
+            });
+        }
+
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-flash-image',
             contents: { parts },
@@ -544,7 +545,7 @@ export const generateEsportImage = async (
 
         const imagePart = response.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
         if (!imagePart || !imagePart.inlineData) {
-            throw new Error("No image was generated by the API.");
+            throw new Error("Aucune image n'a été générée par l'API.");
         }
         const imageBase64 = imagePart.inlineData.data;
 
@@ -559,11 +560,7 @@ export const generateEsportImage = async (
         return { imageBase64, prompt, textVerified, marginsVerified };
 
     } catch (error) {
-        console.error("Error in generateEsportImage:", error);
-        if (error instanceof Error) {
-            throw new Error(`Gemini API Error: ${error.message}`);
-        }
-        throw new Error("An unknown error occurred during image generation.");
+        handleApiError(error, 'generateEsportImage');
     }
 };
 
@@ -574,14 +571,14 @@ export const addTextToImage = async (
     format: Format,
     textStyle?: TextStyle
 ): Promise<{ imageBase64: string }> => {
-    const ai = new GoogleGenAI({ apiKey: getApiKey() });
-    
-    const prompt = generateTextOverlayPrompt(options, format, textStyle);
-    
-    const imagePart = { inlineData: { mimeType, data: imageBase64 } };
-    const textPart = { text: prompt };
-
     try {
+        const ai = new GoogleGenAI({ apiKey: getApiKey() });
+        
+        const prompt = generateTextOverlayPrompt(options, format, textStyle);
+        
+        const imagePart = { inlineData: { mimeType, data: imageBase64 } };
+        const textPart = { text: prompt };
+
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-flash-image',
             contents: { parts: [imagePart, textPart] },
@@ -592,16 +589,12 @@ export const addTextToImage = async (
 
         const generatedImagePart = response.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
         if (!generatedImagePart || !generatedImagePart.inlineData) {
-            throw new Error("No image was generated when adding text.");
+            throw new Error("Aucune image n'a été générée lors de l'ajout de texte.");
         }
         const newImageBase64 = generatedImagePart.inlineData.data;
         return { imageBase64: newImageBase64 };
     } catch (error) {
-        console.error("Error in addTextToImage:", error);
-        if (error instanceof Error) {
-            throw new Error(`Gemini API Error while adding text: ${error.message}`);
-        }
-        throw new Error("An unknown error occurred during text addition.");
+        handleApiError(error, 'addTextToImage');
     }
 };
 
@@ -611,20 +604,20 @@ export const adaptEsportImage = async (
     options: EsportPromptOptions,
     targetFormat: Format
 ): Promise<{ imageBase64: string }> => {
-    const ai = new GoogleGenAI({ apiKey: getApiKey() });
-    
-    const adaptationOptions = { ...options, format: targetFormat };
-    const prompt = generateEsportPrompt(adaptationOptions, [], true);
-
-    const imagePart = {
-        inlineData: {
-            mimeType: masterImageMimeType,
-            data: masterImageBase64,
-        },
-    };
-    const textPart = { text: prompt };
-
     try {
+        const ai = new GoogleGenAI({ apiKey: getApiKey() });
+        
+        const adaptationOptions = { ...options, format: targetFormat };
+        const prompt = generateEsportPrompt(adaptationOptions, [], true);
+
+        const imagePart = {
+            inlineData: {
+                mimeType: masterImageMimeType,
+                data: masterImageBase64,
+            },
+        };
+        const textPart = { text: prompt };
+
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-flash-image',
             contents: { parts: [imagePart, textPart] },
@@ -635,17 +628,13 @@ export const adaptEsportImage = async (
 
         const generatedImagePart = response.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
         if (!generatedImagePart || !generatedImagePart.inlineData) {
-            throw new Error("No image was generated during adaptation.");
+            throw new Error("Aucune image n'a été générée pendant l'adaptation.");
         }
         const imageBase64 = generatedImagePart.inlineData.data;
         return { imageBase64 };
 
     } catch (error) {
-        console.error(`Error adapting to format ${targetFormat}:`, error);
-        if (error instanceof Error) {
-            throw new Error(`Gemini API Error during adaptation: ${error.message}`);
-        }
-        throw new Error("An unknown error occurred during image adaptation.");
+        handleApiError(error, `adaptEsportImage to ${targetFormat}`);
     }
 };
 
@@ -653,8 +642,8 @@ export const correctText = async (textToCorrect: string): Promise<string> => {
     if (!textToCorrect.trim()) {
         return "";
     }
-    const ai = new GoogleGenAI({ apiKey: getApiKey() });
     try {
+        const ai = new GoogleGenAI({ apiKey: getApiKey() });
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-flash',
             contents: `Correct the grammar, spelling, and syntax of the following French text. Preserve the original meaning. Return only the corrected text, without any introductory phrases like "Here is the corrected text:".
@@ -668,16 +657,14 @@ Corrected text:`,
         });
         return response.text.trim();
     } catch (error) {
-        console.error("Error during text correction:", error);
-        // Fallback to original text if correction fails
-        return textToCorrect;
+        handleApiError(error, 'correctText');
     }
 };
 
 export const refinePrompt = async (currentPrompt: string, userFeedback: string): Promise<string> => {
-    const ai = new GoogleGenAI({ apiKey: getApiKey() });
-
     try {
+        const ai = new GoogleGenAI({ apiKey: getApiKey() });
+
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-pro',
             contents: `The user wants to refine an image generation prompt.
@@ -700,47 +687,46 @@ export const refinePrompt = async (currentPrompt: string, userFeedback: string):
 
         return response.text.trim();
     } catch (error) {
-        console.error("Error refining prompt:", error);
-        throw new Error("Failed to get a response from the assistant.");
+        handleApiError(error, 'refinePrompt');
     }
 };
 
 export const suggestUniversePreset = async (theme: string): Promise<Omit<UniversePreset, 'id' | 'isCustom' | 'dominant'>> => {
-    const ai = new GoogleGenAI({ apiKey: getApiKey() });
-
-    const prompt = `
-    Based on the user's theme: "${theme}", generate a complete "Universe Preset" for an esports visual generator.
-    The response MUST be a valid JSON object matching the schema. Do not include any markdown or extra text.
-
-    **JSON Schema:**
-    - "label": (string) A catchy name for the universe (e.g., "Cosmic Gladiators").
-    - "description": (string) A short, evocative description of the universe's feel.
-    - "gameType": (string) One of: "${GAME_TYPES.map(g => g.value).join('", "')}".
-    - "style": (string) One of: "${GRAPHIC_STYLES.map(s => s.value).join('", "')}".
-    - "ambiance": (string) One of: "${AMBIANCES.map(a => a.value).join('", "')}".
-    - "elements": (string) One of: "${VISUAL_ELEMENTS.map(e => e.value).join('", "')}".
-    - "keywords": (array of strings) 5-7 thematic keywords.
-    - "colorPalette": (array of 4 strings) 4 hex color codes that define the palette.
-    - "influenceWeight": (number) A value between 0.4 and 0.8 representing its creative weight.
-    `;
-
-    const schema = {
-        type: Type.OBJECT,
-        properties: {
-            label: { type: Type.STRING },
-            description: { type: Type.STRING },
-            gameType: { type: Type.STRING },
-            style: { type: Type.STRING },
-            ambiance: { type: Type.STRING },
-            elements: { type: Type.STRING },
-            keywords: { type: Type.ARRAY, items: { type: Type.STRING } },
-            colorPalette: { type: Type.ARRAY, items: { type: Type.STRING } },
-            influenceWeight: { type: Type.NUMBER },
-        },
-        required: ["label", "description", "gameType", "style", "ambiance", "elements", "keywords", "colorPalette", "influenceWeight"]
-    };
-
     try {
+        const ai = new GoogleGenAI({ apiKey: getApiKey() });
+
+        const prompt = `
+        Based on the user's theme: "${theme}", generate a complete "Universe Preset" for an esports visual generator.
+        The response MUST be a valid JSON object matching the schema. Do not include any markdown or extra text.
+
+        **JSON Schema:**
+        - "label": (string) A catchy name for the universe (e.g., "Cosmic Gladiators").
+        - "description": (string) A short, evocative description of the universe's feel.
+        - "gameType": (string) One of: "${GAME_TYPES.map(g => g.value).join('", "')}".
+        - "style": (string) One of: "${GRAPHIC_STYLES.map(s => s.value).join('", "')}".
+        - "ambiance": (string) One of: "${AMBIANCES.map(a => a.value).join('", "')}".
+        - "elements": (string) One of: "${VISUAL_ELEMENTS.map(e => e.value).join('", "')}".
+        - "keywords": (array of strings) 5-7 thematic keywords.
+        - "colorPalette": (array of 4 strings) 4 hex color codes that define the palette.
+        - "influenceWeight": (number) A value between 0.4 and 0.8 representing its creative weight.
+        `;
+
+        const schema = {
+            type: Type.OBJECT,
+            properties: {
+                label: { type: Type.STRING },
+                description: { type: Type.STRING },
+                gameType: { type: Type.STRING },
+                style: { type: Type.STRING },
+                ambiance: { type: Type.STRING },
+                elements: { type: Type.STRING },
+                keywords: { type: Type.ARRAY, items: { type: Type.STRING } },
+                colorPalette: { type: Type.ARRAY, items: { type: Type.STRING } },
+                influenceWeight: { type: Type.NUMBER },
+            },
+            required: ["label", "description", "gameType", "style", "ambiance", "elements", "keywords", "colorPalette", "influenceWeight"]
+        };
+
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-pro',
             contents: prompt,
@@ -752,7 +738,6 @@ export const suggestUniversePreset = async (theme: string): Promise<Omit<Univers
         });
         return JSON.parse(response.text.trim());
     } catch (error) {
-        console.error("Error suggesting universe preset:", error);
-        throw new Error("Failed to generate a universe suggestion.");
+        handleApiError(error, 'suggestUniversePreset');
     }
 };
