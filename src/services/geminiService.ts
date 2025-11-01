@@ -9,7 +9,7 @@ const getApiKey = () => {
     const apiKey = process.env.API_KEY;
     if (!apiKey) {
         // This error will be caught by the calling function's try/catch block.
-        throw new Error("API_KEY environment variable is not set.");
+        throw new Error("La variable d'environnement API_KEY n'est pas définie.");
     }
     return apiKey;
 };
@@ -17,8 +17,8 @@ const getApiKey = () => {
 const handleApiError = (error: unknown, functionName: string): never => {
     console.error(`Error in ${functionName}:`, error);
     if (error instanceof Error) {
-        if (error.message.includes("API_KEY") || error.message.toLowerCase().includes("authentication") || error.message.toLowerCase().includes("api key not valid")) {
-            throw new Error("La clé d'API est manquante, invalide ou non autorisée. Veuillez vérifier votre configuration sur Vercel et vous assurer que la facturation est activée sur votre compte Google AI Studio, puis redéployez.");
+        if (error.message.includes("API_KEY") || error.message.toLowerCase().includes("authentication") || error.message.toLowerCase().includes("api key not valid") || error.message.toLowerCase().includes("permission denied")) {
+            throw new Error("Erreur d'API : La clé est invalide ou la facturation n'est pas activée. ACTION REQUISE : Assurez-vous que la facturation est bien activée pour votre projet sur Google Cloud (console.cloud.google.com/billing). C'est la cause la plus courante. Redéployez ensuite sur Vercel.");
         }
         throw new Error(`Erreur Gemini: ${error.message}`);
     }
