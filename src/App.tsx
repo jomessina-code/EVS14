@@ -9,7 +9,7 @@ import Toast from './components/Toast';
 import FormatManager from './components/FormatManager';
 import PromptEditorModal from './components/ControlsPanel/PromptEditorModal';
 import PricingModal from './components/PricingModal'; // Import the new modal
-import ApiKeyErrorPanel from './components/ApiKeyErrorPanel';
+import SelectApiKeyPanel from './components/SelectApiKeyPanel';
 import type { EsportPromptOptions, QualityCheckResults, GenerationHistoryItem, UniverseId, Format, DerivedImage, ChatMessage, UniversePreset, TextConfig, TextStyle } from './types';
 import { generateEsportImage, adaptEsportImage, generateEsportPrompt, refinePrompt, suggestUniversePreset, verifyNoMargins, verifyTextFidelity, addTextToImage, determineTextStyle } from './services/geminiService';
 import { UNIVERSE_PRESETS } from './constants/options';
@@ -85,12 +85,42 @@ const App: React.FC = () => {
   
   const [loadingState, setLoadingState] = useState({ progress: 0, message: '' });
 
+  const [isKeyReady, setIsKeyReady] = useState(false);
+
   const isLoading = isGenerating || isModifying || isGeneratingAdaptations || isAssistantResponding || isSuggestingPreset;
   
-    const showToast = useCallback((message: string) => {
+  const showToast = useCallback((message: string) => {
     setToastMessage(message);
     setTimeout(() => setToastMessage(''), 5000);
   }, []);
+
+  useEffect(() => {
+    const checkKey = async () => {
+      // @ts-ignore - aistudio is globally available in the platform environment
+      if (window.aistudio && await window.aistudio.hasSelectedApiKey()) {
+        setIsKeyReady(true);
+      }
+    };
+    checkKey();
+  }, []);
+
+  const handleKeySelection = async () => {
+    // @ts-ignore
+    if (window.aistudio) {
+        try {
+            // @ts-ignore
+            await window.aistudio.openSelectKey();
+            // Assume success and update UI immediately to avoid race conditions and allow the app to proceed.
+            // The next API call will validate the key.
+            setIsKeyReady(true);
+        } catch (e) {
+            console.error("Key selection was cancelled or failed.", e);
+            showToast("La sélection de la clé API a été annulée.");
+        }
+    } else {
+        showToast("L'environnement de sélection de clé n'est pas disponible.");
+    }
+  };
 
   const setOptions: React.Dispatch<React.SetStateAction<EsportPromptOptions>> = (value) => {
     const newOptions = typeof value === 'function' ? value(options) : value;
@@ -294,7 +324,12 @@ const App: React.FC = () => {
         return newPresetData;
     } catch (err: unknown) {
         const errorMessage = err instanceof Error ? err.message : "Erreur lors de la suggestion d'univers.";
-        showToast(`❌ Erreur: ${errorMessage}`);
+        if (errorMessage === 'API_KEY_INVALID') {
+            showToast("❌ Clé API invalide ou non autorisée. Veuillez en sélectionner une nouvelle.");
+            setIsKeyReady(false);
+        } else {
+            showToast(`❌ Erreur: ${errorMessage}`);
+        }
         return null;
     } finally {
         setIsSuggestingPreset(false);
@@ -381,7 +416,12 @@ const App: React.FC = () => {
             });
         } catch (err: unknown) {
             const errorMessage = err instanceof Error ? err.message : "Erreur lors de la génération du visuel.";
-            showToast(`❌ Erreur: ${errorMessage}`);
+            if (errorMessage === 'API_KEY_INVALID') {
+                showToast("❌ Clé API invalide ou non autorisée. Veuillez en sélectionner une nouvelle.");
+                setIsKeyReady(false);
+            } else {
+                showToast(`❌ Erreur: ${errorMessage}`);
+            }
             setView('welcome');
         } finally {
             setIsGenerating(false);
@@ -485,7 +525,12 @@ const App: React.FC = () => {
 
         } catch (err: unknown) {
             const errorMessage = err instanceof Error ? err.message : "Erreur lors de la modification de l'image.";
-            showToast(`❌ Erreur: ${errorMessage}`);
+            if (errorMessage === 'API_KEY_INVALID') {
+                showToast("❌ Clé API invalide ou non autorisée. Veuillez en sélectionner une nouvelle.");
+                setIsKeyReady(false);
+            } else {
+                showToast(`❌ Erreur: ${errorMessage}`);
+            }
             setGeneratedImage(previousImage);
             setView('result');
         } finally {
@@ -570,7 +615,12 @@ const App: React.FC = () => {
         showToast(`✅ ${results.filter(r => r.imageUrl).length} déclinaisons adaptées !`);
     } catch (err) {
         const errorMessage = err instanceof Error ? err.message : "Erreur lors de l'adaptation des déclinaisons.";
-        showToast(`❌ Erreur: ${errorMessage}`);
+        if (errorMessage === 'API_KEY_INVALID') {
+            showToast("❌ Clé API invalide ou non autorisée. Veuillez en sélectionner une nouvelle.");
+            setIsKeyReady(false);
+        } else {
+            showToast(`❌ Erreur: ${errorMessage}`);
+        }
     } finally {
         setIsGeneratingAdaptations(false);
     }
@@ -644,11 +694,10 @@ const App: React.FC = () => {
         return <WelcomePanel onOpenPricingModal={() => setIsPricingModalOpen(true)} />;
     }
   };
-  
-  // This check is removed to allow the app to load and handle API key errors at runtime.
-  // if (!process.env.API_KEY) {
-  //   return <ApiKeyErrorPanel />;
-  // }
+
+  if (!isKeyReady) {
+    return <SelectApiKeyPanel onSelectKey={handleKeySelection} />;
+  }
 
   return (
     <div className="relative h-screen bg-gray-900 text-white font-inter overflow-hidden">

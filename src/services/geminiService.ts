@@ -8,8 +8,9 @@ import { GAME_TYPES, GRAPHIC_STYLES, AMBIANCES, VISUAL_ELEMENTS } from "../const
 const getApiKey = () => {
     const apiKey = process.env.API_KEY;
     if (!apiKey) {
-        // This error will be caught by the calling function's try/catch block.
-        throw new Error("La variable d'environnement API_KEY n'est pas définie.");
+        // This error should ideally not be hit if the new key selection flow works,
+        // but it's kept as a safeguard.
+        throw new Error("API_KEY_INVALID");
     }
     return apiKey;
 };
@@ -17,11 +18,21 @@ const getApiKey = () => {
 const handleApiError = (error: unknown, functionName: string): never => {
     console.error(`Error in ${functionName}:`, error);
     if (error instanceof Error) {
-        if (error.message.includes("API_KEY") || error.message.toLowerCase().includes("authentication") || error.message.toLowerCase().includes("api key not valid") || error.message.toLowerCase().includes("permission denied")) {
-            throw new Error("Erreur d'API : La clé est invalide ou la facturation n'est pas activée. ACTION REQUISE : Assurez-vous que la facturation est bien activée pour votre projet sur Google Cloud (console.cloud.google.com/billing). C'est la cause la plus courante. Redéployez ensuite sur Vercel.");
+        const lowerCaseError = error.message.toLowerCase();
+        // Check for specific, recoverable API key errors.
+        if (
+            lowerCaseError.includes("api key not valid") ||
+            lowerCaseError.includes("permission denied") ||
+            lowerCaseError.includes("requested entity was not found") || // Often indicates a bad key
+            lowerCaseError.includes("api_key") // Generic catch-all
+        ) {
+            // Throw a specific error code that the UI can catch to trigger the key selection panel.
+            throw new Error('API_KEY_INVALID');
         }
+        // For other errors, throw a more generic Gemini error message.
         throw new Error(`Erreur Gemini: ${error.message}`);
     }
+    // Fallback for non-Error objects.
     throw new Error("Une erreur inconnue est survenue lors de la communication avec l'API.");
 };
 
