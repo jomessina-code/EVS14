@@ -8,6 +8,7 @@ import Toast from './components/Toast';
 import FormatManager from './components/FormatManager';
 import PromptEditorModal from './components/ControlsPanel/PromptEditorModal';
 import PricingModal from './components/PricingModal'; // Import the new modal
+import ApiKeyErrorPanel from './components/ApiKeyErrorPanel';
 import type { EsportPromptOptions, QualityCheckResults, GenerationHistoryItem, UniverseId, Format, DerivedImage, ChatMessage, UniversePreset, TextConfig, TextStyle } from './types';
 import { generateEsportImage, adaptEsportImage, generateEsportPrompt, refinePrompt, suggestUniversePreset, verifyNoMargins, verifyTextFidelity, addTextToImage, determineTextStyle } from './services/geminiService';
 import { UNIVERSE_PRESETS } from './constants/options';
@@ -642,6 +643,10 @@ const App: React.FC = () => {
         return <WelcomePanel onOpenPricingModal={() => setIsPricingModalOpen(true)} />;
     }
   };
+  
+  if (!process.env.API_KEY) {
+    return <ApiKeyErrorPanel />;
+  }
 
   return (
     <div className="relative h-screen bg-gray-900 text-white font-inter overflow-hidden">
