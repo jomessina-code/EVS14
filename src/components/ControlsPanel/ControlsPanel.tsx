@@ -1,7 +1,7 @@
 
 
 import React, { useState } from 'react';
-import type { EsportPromptOptions, UniverseId, GenerationHistoryItem, UniversePreset } from '../../types';
+import type { EsportPromptOptions, UniverseId, GenerationHistoryItem, UniversePreset, VisualElements, SavedSubject } from '../../types';
 import { GAME_TYPES, GRAPHIC_STYLES, AMBIANCES, VISUAL_ELEMENTS } from '../../constants/options';
 import { DECLINATION_FORMATS } from '../../constants/formats';
 import SpinnerIcon from '../icons/SpinnerIcon';
@@ -14,6 +14,11 @@ import CalendarIcon from '../icons/CalendarIcon';
 import StarIcon from '../icons/StarIcon';
 import PaintBrushIcon from '../icons/PaintBrushIcon';
 import AdjustmentsIcon from '../icons/AdjustmentsIcon';
+import { useVoiceToText } from '../../hooks/useVoiceToText';
+import MicrophoneIcon from '../icons/MicrophoneIcon';
+import SendIcon from '../icons/SendIcon';
+import { SparklesIcon } from '../icons/CheckIcon';
+import EyeIcon from '../icons/EyeIcon';
 
 interface SectionProps {
   title: string;
@@ -54,9 +59,50 @@ const Select: React.FC<React.SelectHTMLAttributes<HTMLSelectElement>> = (props) 
   <select {...props} className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500" />
 );
 
-const Input: React.FC<React.InputHTMLAttributes<HTMLInputElement>> = (props) => (
-    <input {...props} className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500" />
+const Input: React.FC<React.InputHTMLAttributes<HTMLInputElement>> = ({ className, ...props }) => (
+    <input {...props} className={`w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-colors duration-200 ${className || ''}`} />
 );
+
+const UniverseDetailsModal: React.FC<{ preset: UniversePreset | null; onClose: () => void }> = ({ preset, onClose }) => {
+  if (!preset) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4 animate-fade-in-up" onClick={onClose} role="dialog" aria-modal="true">
+      <div className="bg-gray-800 rounded-lg shadow-2xl w-full max-w-md p-6 border border-purple-700" onClick={e => e.stopPropagation()}>
+        <div className="flex justify-between items-center mb-4">
+          <h4 className="font-bold text-purple-300 font-orbitron text-lg">{preset.label}</h4>
+          <button onClick={onClose} className="text-gray-400 hover:text-white text-3xl leading-none" aria-label="Fermer la description">&times;</button>
+        </div>
+        <p className="text-gray-300 text-sm mb-4">{preset.description}</p>
+        <div className="border-t border-gray-700 pt-3 space-y-2 text-sm">
+          <div className="flex justify-between items-center gap-2">
+            <span className="font-semibold text-gray-400 whitespace-nowrap">Style :</span>
+            <span className="text-right text-gray-200">{preset.style}</span>
+          </div>
+          <div className="flex justify-between items-center gap-2">
+            <span className="font-semibold text-gray-400 whitespace-nowrap">Ambiance :</span>
+            <span className="text-right text-gray-200">{preset.ambiance || 'Non spécifiée'}</span>
+          </div>
+          <div className="flex justify-between items-center gap-2">
+            <span className="font-semibold text-gray-400 whitespace-nowrap">Sujet type :</span>
+            <span className="text-right text-gray-200">{preset.elements}</span>
+          </div>
+        </div>
+        <div className="mt-4">
+          <p className="text-sm font-semibold text-gray-400">Mots-clés :</p>
+          <div className="flex flex-wrap gap-2 mt-2">
+            {preset.keywords.map(keyword => (
+              <span key={keyword} className="bg-gray-700 text-purple-300 text-xs px-2 py-1 rounded-full">
+                {keyword}
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 
 interface ControlsPanelProps {
   options: EsportPromptOptions;
@@ -77,6 +123,10 @@ interface ControlsPanelProps {
   onSuggestPreset: (theme: string) => Promise<Omit<UniversePreset, 'id' | 'isCustom' | 'dominant'> | null>;
   isSuggestingPreset: boolean;
   onClosePanel: () => void;
+  savedSubjects: SavedSubject[];
+  onAddSavedSubject: (description: string) => void;
+  onDeleteSavedSubject: (subjectId: string) => void;
+  onSubjectToggle: (description: string) => void;
 }
 
 const EVS_LOGO_URL = "https://i.postimg.cc/nVCRVCHb/logo-EVSV2.png";
@@ -98,16 +148,65 @@ const ControlsPanel: React.FC<ControlsPanelProps> = ({
   onSuggestPreset,
   isSuggestingPreset,
   onClosePanel,
+  savedSubjects,
+  onAddSavedSubject,
+  onDeleteSavedSubject,
+  onSubjectToggle,
 }) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingPreset, setEditingPreset] = useState<UniversePreset | null>(null);
+  const [visualElementInput, setVisualElementInput] = useState('');
+  const [activePresetDetails, setActivePresetDetails] = useState<UniversePreset | null>(null);
+
+  const { isRecording, isCorrecting, toggleRecording } = useVoiceToText({
+    onCorrectedTranscript: (transcript: string) => {
+        setVisualElementInput(transcript);
+    },
+    onError: (error) => {
+      console.error("Voice to text error in ControlsPanel:", error);
+    },
+  });
+
+  const handleToggleRecording = () => {
+    if (!isRecording) {
+        setVisualElementInput('');
+    }
+    toggleRecording();
+  };
+
+  const executeVisualElementSubmit = () => {
+    const description = visualElementInput.trim();
+    if (description) {
+      onAddSavedSubject(description);
+      onSubjectToggle(description);
+      setVisualElementInput('');
+    }
+  };
+
+  const handleVisualElementSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    executeVisualElementSubmit();
+  };
+
+  const handleVisualElementKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (!isRecording && !isCorrecting && visualElementInput.trim()) {
+        executeVisualElementSubmit();
+      }
+    }
+  };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value, type } = e.target;
     const isCheckbox = type === 'checkbox';
     const isChecked = isCheckbox ? (e.target as HTMLInputElement).checked : undefined;
     
-    setOptions(prev => ({ ...prev, [name]: isCheckbox ? isChecked : value }));
+    if (name === 'visualElements') {
+        setOptions(prev => ({ ...prev, visualElements: value as VisualElements, visualElementDescriptions: [] }));
+    } else {
+        setOptions(prev => ({ ...prev, [name]: isCheckbox ? isChecked : value }));
+    }
   };
 
   const handleRangeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -132,8 +231,6 @@ const ControlsPanel: React.FC<ControlsPanelProps> = ({
                          options.visualElements === "Duo de joueurs" ||
                          options.visualElements === "Logo ou trophée";
 
-  const isSquareFormat = options.format === '1:1 (Carré)';
-
   return (
     <>
       <div className="relative flex flex-col h-full bg-gray-800 text-gray-200">
@@ -154,9 +251,9 @@ const ControlsPanel: React.FC<ControlsPanelProps> = ({
         </header>
 
         <main className="flex-1 overflow-y-auto p-4 space-y-6 custom-scrollbar">
-          <HistoryPanel history={history} onRestore={onRestoreFromHistory} onDelete={onDeleteHistoryItem} />
+          <HistoryPanel history={history} onRestore={onRestoreFromHistory} onDelete={onDeleteHistoryItem} allPresets={allPresets} />
           
-          <Section title="Univers & Synergies" icon={<HandshakeIcon />}>
+          <Section title="Univers" icon={<HandshakeIcon />}>
             <div className="grid grid-cols-2 gap-2">
               {allPresets.map(preset => {
                 const isSelected = options.universes.includes(preset.id);
@@ -171,11 +268,20 @@ const ControlsPanel: React.FC<ControlsPanelProps> = ({
                         <p className="text-xs text-gray-400 mt-1 line-clamp-2">{preset.description}</p>
                       </div>
                     </button>
+                    <div className="absolute top-1 right-1">
+                        <button 
+                            onClick={(e) => { e.stopPropagation(); setActivePresetDetails(preset); }} 
+                            className="w-6 h-6 rounded-full flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700/80 transition-colors" 
+                            aria-label={`Détails pour ${preset.label}`}
+                        >
+                            <EyeIcon className="w-4 h-4" />
+                        </button>
+                    </div>
                     {preset.isCustom && (
-                      <div className="absolute top-1 right-1 flex gap-1">
-                        <button onClick={() => handleOpenModal(preset)} className="w-6 h-6 bg-gray-800/80 rounded-full flex items-center justify-center text-gray-300 hover:text-white hover:bg-blue-600"><PencilIcon className="w-3 h-3" /></button>
-                        <button onClick={() => onDeletePreset(preset.id)} className="w-6 h-6 bg-gray-800/80 rounded-full flex items-center justify-center text-gray-300 hover:text-white hover:bg-red-600"><TrashIcon className="w-3 h-3"/></button>
-                      </div>
+                        <div className="absolute bottom-1 right-1 flex items-center gap-1">
+                            <button onClick={() => handleOpenModal(preset)} className="w-6 h-6 bg-gray-800/80 rounded-full flex items-center justify-center text-gray-300 hover:text-white hover:bg-blue-600"><PencilIcon className="w-3 h-3" /></button>
+                            <button onClick={() => onDeletePreset(preset.id)} className="w-6 h-6 bg-gray-800/80 rounded-full flex items-center justify-center text-gray-300 hover:text-white hover:bg-red-600"><TrashIcon className="w-3 h-3"/></button>
+                        </div>
                     )}
                   </div>
                 )
@@ -186,117 +292,186 @@ const ControlsPanel: React.FC<ControlsPanelProps> = ({
             </button>
           </Section>
 
-          <Section title="Contexte de l'événement" icon={<CalendarIcon />} collapsable>
+          <Section title="Sujet principal" icon={<StarIcon />}>
             <div>
-              <Label htmlFor="eventName">Nom de l'événement</Label>
-              <Input id="eventName" name="eventName" value={options.eventName} onChange={handleInputChange} placeholder="Ex: Summer Split Finals" />
+                <Label htmlFor="visualElements">Type</Label>
+                <Select id="visualElements" name="visualElements" value={options.visualElements} onChange={handleInputChange}>
+                    {VISUAL_ELEMENTS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                </Select>
             </div>
-            <div>
-              <Label htmlFor="baseline">Baseline / Slogan</Label>
-              <Input id="baseline" name="baseline" value={options.baseline} onChange={handleInputChange} placeholder="Ex: Qui sera le champion ?" />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-               <div>
-                  <Label htmlFor="eventLocation">Lieu</Label>
-                  <Input id="eventLocation" name="eventLocation" value={options.eventLocation} onChange={handleInputChange} placeholder="Ex: En ligne" />
-               </div>
-               <div>
-                  <Label htmlFor="eventDate">Date</Label>
-                  <Input id="eventDate" name="eventDate" value={options.eventDate} onChange={handleInputChange} placeholder="Ex: 24.08.2024" />
-               </div>
-            </div>
-            <div className="flex items-center justify-between mt-2">
-                <div className="flex items-center gap-2">
-                    <input type="checkbox" id="hideText" name="hideText" checked={options.hideText} onChange={handleInputChange} className="h-4 w-4 rounded bg-gray-700 text-purple-600 focus:ring-purple-500" />
-                    <Label htmlFor="hideText">Masquer le texte</Label>
-                </div>
-                {!options.hideText && (
-                    <div className="flex items-center gap-2">
-                        <input type="checkbox" id="textLock" name="textLock" checked={options.textLock} onChange={handleInputChange} className="h-4 w-4 rounded bg-gray-700 text-purple-600 focus:ring-purple-500" />
-                        <Label htmlFor="textLock">Verrouiller texte</Label>
+            {savedSubjects.length > 0 && (
+              <div className="mt-4 space-y-2">
+                <Label>Sujets enregistrés</Label>
+                <div className="flex flex-wrap gap-2">
+                  {savedSubjects.map(subject => (
+                    <div key={subject.id} className="relative group">
+                      <button
+                        onClick={() => onSubjectToggle(subject.description)}
+                        className={`text-xs px-3 py-1.5 rounded-full transition-colors ${
+                          options.visualElementDescriptions.includes(subject.description)
+                            ? 'bg-purple-600 text-white'
+                            : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                        }`}
+                      >
+                        {subject.description}
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onDeleteSavedSubject(subject.id);
+                        }}
+                        className="absolute -top-1 -right-1 w-4 h-4 bg-red-600 text-white text-xs rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                      >
+                        &times;
+                      </button>
                     </div>
-                )}
-            </div>
-          </Section>
-
-          <Section title="Élément Principal" icon={<StarIcon />}>
-             <div>
-              <Label htmlFor="visualElements">Éléments visuels clés</Label>
-              <Select id="visualElements" name="visualElements" value={options.visualElements} onChange={handleInputChange}>
-                {VISUAL_ELEMENTS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
-              </Select>
-            </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            <form onSubmit={handleVisualElementSubmit} className="mt-4">
+              <Label htmlFor="visualElementInput">Décrivez un ou plusieurs sujets (séparés par "et")</Label>
+              <div className="flex items-center gap-2">
+                <Input
+                  id="visualElementInput"
+                  name="visualElementInput"
+                  value={visualElementInput}
+                  onChange={(e) => setVisualElementInput(e.target.value)}
+                  onKeyDown={handleVisualElementKeyDown}
+                  placeholder={isCorrecting ? 'Transcription...' : isRecording ? 'Enregistrement...' : 'ex: un guerrier et un dragon'}
+                  disabled={isRecording || isCorrecting}
+                  className={isRecording ? 'recording-glow' : ''}
+                />
+                <button
+                  type="button"
+                  onClick={handleToggleRecording}
+                  disabled={isCorrecting}
+                  className={`flex-shrink-0 w-10 h-10 p-2 rounded-lg transition-colors ${isRecording ? 'bg-red-600' : 'bg-gray-600'}`}
+                  aria-label={isRecording ? 'Arrêter' : 'Enregistrer'}
+                >
+                  <MicrophoneIcon className="w-full h-full" />
+                </button>
+                <button
+                  type="submit"
+                  disabled={!visualElementInput.trim()}
+                  className="flex-shrink-0 w-10 h-10 p-2 rounded-lg bg-purple-600 disabled:bg-gray-500"
+                  aria-label="Ajouter le sujet"
+                >
+                  <SendIcon className="w-full h-full" />
+                </button>
+              </div>
+            </form>
+            
             {isSizedElement && (
-              <div>
-                <Label htmlFor="elementSize">Taille de l'élément principal : {options.elementSize ?? 75}%</Label>
-                <input id="elementSize" type="range" min="0" max="100" step="1" name="elementSize" value={options.elementSize ?? 75} onChange={handleRangeChange} className={`w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer ${isSquareFormat ? 'accent-gray-500' : 'accent-purple-500'}`}/>
+              <div className="mt-4">
+                  <Label htmlFor="elementSize">Taille du sujet : {options.elementSize ?? 75}%</Label>
+                  <Input 
+                      type="range"
+                      id="elementSize"
+                      name="elementSize"
+                      min="0"
+                      max="100"
+                      value={options.elementSize ?? 75}
+                      onChange={handleRangeChange}
+                      className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                  />
+                  <div className="flex justify-between text-xs text-gray-400 mt-1">
+                      <span>Fond seul</span>
+                      <span>Très gros plan</span>
+                  </div>
               </div>
             )}
           </Section>
-
-          <Section title="Style global" icon={<PaintBrushIcon />}>
-            <div>
-              <Label htmlFor="gameType">Type de jeu</Label>
-              <Select id="gameType" name="gameType" value={options.gameType} onChange={handleInputChange}>
-                {GAME_TYPES.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
-              </Select>
+          
+          <Section title="Style & Format" icon={<PaintBrushIcon />} collapsable={true}>
+            <div className="grid grid-cols-2 gap-4">
+                <div>
+                    <Label htmlFor="gameType">Type de jeu</Label>
+                    <Select id="gameType" name="gameType" value={options.gameType} onChange={handleInputChange}>
+                    {GAME_TYPES.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                    </Select>
+                </div>
+                <div>
+                    <Label htmlFor="graphicStyle">Style graphique</Label>
+                    <Select id="graphicStyle" name="graphicStyle" value={options.graphicStyle} onChange={handleInputChange}>
+                    {GRAPHIC_STYLES.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                    </Select>
+                </div>
             </div>
             <div>
-              <Label htmlFor="graphicStyle">Style graphique dominant</Label>
-              <Select id="graphicStyle" name="graphicStyle" value={options.graphicStyle} onChange={handleInputChange}>
-                {GRAPHIC_STYLES.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
-              </Select>
-            </div>
-             <div>
-              <Label htmlFor="ambiance">Ambiance visuelle / Éclairage</Label>
-              <Select id="ambiance" name="ambiance" value={options.ambiance} onChange={handleInputChange}>
-                {AMBIANCES.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+              <Label htmlFor="format">Format</Label>
+              <Select id="format" name="format" value={options.format} onChange={handleInputChange}>
+                  {DECLINATION_FORMATS.map(f => <option key={f.id} value={f.id}>{f.id} ({f.label})</option>)}
               </Select>
             </div>
           </Section>
           
-          <Section title="Format & Finitions" icon={<AdjustmentsIcon />} collapsable>
-             <div>
-                <Label htmlFor="format">Format de sortie initial</Label>
-                <Select id="format" name="format" value={options.format} onChange={handleInputChange}>
-                    {DECLINATION_FORMATS.map(opt => <option key={opt.id} value={opt.id}>{opt.label} ({opt.description})</option>)}
-                </Select>
+          <Section title="Ambiance & Éclairage" icon={<AdjustmentsIcon />} collapsable={true}>
+            <div>
+              <Label htmlFor="ambiance">Ambiance</Label>
+              <Select id="ambiance" name="ambiance" value={options.ambiance} onChange={handleInputChange}>
+                {AMBIANCES.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+              </Select>
             </div>
             <div>
-                <Label htmlFor="effectsIntensity">Intensité des effets spéciaux : {options.effectsIntensity}%</Label>
-                <input id="effectsIntensity" type="range" min="0" max="100" step="10" name="effectsIntensity" value={options.effectsIntensity} onChange={handleRangeChange} className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-purple-500"/>
-            </div>
-            <div className="flex items-center gap-2">
-                <input type="checkbox" id="highResolution" name="highResolution" checked={options.highResolution} onChange={handleInputChange} className="h-4 w-4 rounded bg-gray-700 text-purple-600 focus:ring-purple-500" />
-                <Label htmlFor="highResolution">Génération Haute Définition</Label>
+              <Label htmlFor="effectsIntensity">Intensité des effets : {options.effectsIntensity}%</Label>
+              <Input type="range" id="effectsIntensity" name="effectsIntensity" min="0" max="100" value={options.effectsIntensity} onChange={handleRangeChange} className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-purple-500"/>
             </div>
           </Section>
+
+          <Section title="Contexte événementiel" icon={<CalendarIcon />} collapsable={true}>
+            <div className="grid grid-cols-2 gap-4">
+                <Input name="eventName" value={options.eventName} onChange={handleInputChange} placeholder="Nom de l'événement" />
+                <Input name="baseline" value={options.baseline} onChange={handleInputChange} placeholder="Slogan / Baseline" />
+                <Input name="eventLocation" value={options.eventLocation} onChange={handleInputChange} placeholder="Lieu" />
+                <Input name="eventDate" value={options.eventDate} onChange={handleInputChange} placeholder="Date" />
+            </div>
+             <div className="flex items-center justify-between mt-4">
+                <div className="flex items-center gap-2">
+                    <input type="checkbox" id="hideText" name="hideText" checked={options.hideText} onChange={handleInputChange} className="h-4 w-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500" />
+                    <Label htmlFor="hideText">Cacher le texte (générer sans)</Label>
+                </div>
+            </div>
+          </Section>
+
+          <Section title="Options avancées" icon={<SparklesIcon />} collapsable={true}>
+            <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                    <input type="checkbox" id="highResolution" name="highResolution" checked={options.highResolution} onChange={handleInputChange} className="h-4 w-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500" />
+                    <Label htmlFor="highResolution">Haute Résolution (plus lent)</Label>
+                </div>
+            </div>
+            <div className="flex items-center justify-between">
+                 <div className="flex items-center gap-2">
+                    <input type="checkbox" id="transparentBackground" name="transparentBackground" checked={options.transparentBackground} onChange={handleInputChange} className="h-4 w-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500" />
+                    <Label htmlFor="transparentBackground">Fond transparent</Label>
+                </div>
+            </div>
+             <div className="mt-2">
+                <button onClick={onOpenPromptEditor} className="w-full text-center text-sm text-purple-400 hover:underline">
+                    Éditer le prompt manuellement
+                </button>
+            </div>
+          </Section>
+
         </main>
         
-        <footer className="flex-shrink-0 p-4 border-t border-gray-700 space-y-3">
-          <button 
-            onClick={onOpenPromptEditor}
-            className="w-full text-center text-sm text-gray-400 hover:text-white underline"
-          >
-            Prévisualiser & éditer le prompt
-          </button>
-          <button 
-            onClick={onGenerate} 
+        <footer className="flex-shrink-0 p-4 border-t border-gray-700">
+          <button
+            onClick={onGenerate}
             disabled={isLoading}
-            className="w-full flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-500 disabled:cursor-not-allowed text-white font-bold py-4 px-4 rounded-lg transition"
+            className="w-full flex items-center justify-center gap-3 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-500 disabled:cursor-not-allowed text-white font-bold py-3 px-4 rounded-lg transition-all duration-300"
           >
-            {isLoading ? <><SpinnerIcon className="w-5 h-5" /> Génération en cours...</> : '✨ Générer le visuel ✨'}
+            {isLoading ? (
+              <><SpinnerIcon className="w-5 h-5" /> Génération en cours...</>
+            ) : (
+              <><SparklesIcon className="w-5 h-5" /> Générer le visuel</>
+            )}
           </button>
         </footer>
       </div>
-      <AddPresetModal 
-        isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        onSave={handleSavePreset}
-        presetToEdit={editingPreset}
-        onSuggestPreset={onSuggestPreset}
-        isSuggestingPreset={isSuggestingPreset}
-      />
+      {activePresetDetails && <UniverseDetailsModal preset={activePresetDetails} onClose={() => setActivePresetDetails(null)} />}
+      {isModalOpen && <AddPresetModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSavePreset} presetToEdit={editingPreset} onSuggestPreset={onSuggestPreset} isSuggestingPreset={isSuggestingPreset} />}
     </>
   );
 };

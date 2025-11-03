@@ -1,5 +1,5 @@
 import React from 'react';
-import type { GenerationHistoryItem } from '../types';
+import type { GenerationHistoryItem, UniversePreset } from '../types';
 import HistoryIcon from './icons/HistoryIcon';
 import TrashIcon from './icons/TrashIcon';
 import PencilIcon from './icons/PencilIcon';
@@ -8,12 +8,41 @@ interface HistoryPanelProps {
   history: GenerationHistoryItem[];
   onRestore: (item: GenerationHistoryItem) => void;
   onDelete: (itemId: string) => void;
+  allPresets: UniversePreset[];
 }
 
-const HistoryPanel: React.FC<HistoryPanelProps> = ({ history, onRestore, onDelete }) => {
+const HistoryPanel: React.FC<HistoryPanelProps> = ({ history, onRestore, onDelete, allPresets }) => {
   if (history.length === 0) {
     return null;
   }
+
+  const historyWithDisplayNames = history.map(item => {
+    if (item.options.eventName) {
+        return { ...item, displayName: item.options.eventName, isVersioned: false };
+    }
+    
+    const universeIds = item.options.universes;
+    let name = "Création manuelle";
+    if (universeIds && universeIds.length > 0) {
+        const universePresets = universeIds
+            .map(id => allPresets.find(p => p.id === id))
+            .filter((p): p is UniversePreset => !!p);
+        if (universePresets.length > 0) {
+            name = universePresets.map(p => p.label).join(' + ');
+        }
+    }
+    return { ...item, displayName: name, isVersioned: true };
+  });
+
+  const versions: { [key: string]: number } = {};
+  const historyWithVersions = historyWithDisplayNames.slice().reverse().map(item => {
+      let finalDisplayName = item.displayName;
+      if (item.isVersioned) {
+          versions[item.displayName] = (versions[item.displayName] || 0) + 1;
+          finalDisplayName = `${item.displayName} v${versions[item.displayName]}`;
+      }
+      return { ...item, finalDisplayName };
+  }).reverse();
 
   return (
     <div className="bg-gray-800/50 p-4 rounded-lg">
@@ -22,20 +51,20 @@ const HistoryPanel: React.FC<HistoryPanelProps> = ({ history, onRestore, onDelet
         Historique des versions
       </h3>
       <div className="max-h-48 overflow-y-auto space-y-2 pr-2">
-        {history.map((item) => (
+        {historyWithVersions.map((item) => (
           <div 
             key={item.id} 
             onClick={() => onRestore(item)}
             className="group relative flex w-full items-center gap-3 rounded-lg bg-gray-700/50 p-2 cursor-pointer transition-colors hover:bg-gray-700"
           >
             <img 
-              src={item.imageUrl} 
+              src={`data:image/png;base64,${item.imageUrl}`} 
               alt="Generated poster thumbnail" 
               className="h-16 w-16 flex-shrink-0 rounded-md object-cover" 
             />
             <div className="overflow-hidden text-left">
               <p className="truncate text-sm font-semibold text-gray-300 group-hover:text-white">
-                {item.options.eventName || "Génération"}
+                {item.finalDisplayName}
               </p>
               <p className="text-xs text-gray-400">
                 {new Date(item.timestamp).toLocaleString('fr-FR', {

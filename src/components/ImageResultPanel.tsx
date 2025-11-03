@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import DownloadIcon from './icons/DownloadIcon';
 import QualityCheckPanel from './QualityCheckPanel';
 import SpinnerIcon from './icons/SpinnerIcon';
-import type { EsportPromptOptions, QualityCheckResults } from '../types';
+import type { EsportPromptOptions, QualityCheckResults, UniversePreset } from '../types';
 import MicrophoneIcon from './icons/MicrophoneIcon';
 import { useVoiceToText } from '../hooks/useVoiceToText';
 import { resizeAndCropImage } from '../utils/image';
@@ -23,6 +23,7 @@ interface ImageResultPanelProps {
   setModificationRequest: React.Dispatch<React.SetStateAction<string>>;
   isModifying: boolean;
   onDecline: () => void;
+  allPresets: UniversePreset[];
 }
 
 const EVS_LOGO_URL = "https://i.postimg.cc/nVCRVCHb/logo-EVSV2.png";
@@ -40,7 +41,8 @@ const ImageResultPanel: React.FC<ImageResultPanelProps> = ({
     modificationRequest,
     setModificationRequest,
     isModifying,
-    onDecline
+    onDecline,
+    allPresets
 }) => {
   const [voiceError, setVoiceError] = useState('');
 
@@ -53,10 +55,33 @@ const ImageResultPanel: React.FC<ImageResultPanelProps> = ({
 
   const handleToggleRecording = () => {
     setVoiceError('');
+    if (!isRecording) {
+        setModificationRequest('');
+    }
     toggleRecording();
   };
 
   const handleDownload = async () => {
+    const slugify = (text: string) => text
+        .toLowerCase()
+        .replace(/\s+/g, '-')
+        .slice(0, 50);
+
+    const selectedUniverses = allPresets
+        .filter(p => options.universes.includes(p.id))
+        .map(p => p.label)
+        .join(' ');
+    
+    const universeSlug = selectedUniverses ? slugify(selectedUniverses) : 'univers-personnalise';
+
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = (now.getMonth() + 1).toString().padStart(2, '0');
+    const day = now.getDate().toString().padStart(2, '0');
+    const hours = now.getHours().toString().padStart(2, '0');
+    const minutes = now.getMinutes().toString().padStart(2, '0');
+    const timestamp = `${year}-${month}-${day}_${hours}${minutes}`;
+
     try {
         const formatDef = DECLINATION_FORMATS.find(f => f.id === options.format);
         if (!formatDef) {
@@ -64,21 +89,15 @@ const ImageResultPanel: React.FC<ImageResultPanelProps> = ({
         }
         
         const [width, height] = formatDef.dimensions.replace('px', '').split('x').map(Number);
-        const resizedImageUrl = await resizeAndCropImage(imageSrc, width, height);
+        const resizedImageUrl = await resizeAndCropImage(`data:image/png;base64,${imageSrc}`, width, height);
         
         const link = document.createElement('a');
         link.href = resizedImageUrl;
 
-        const slugify = (text: string) => text
-            .toLowerCase()
-            .replace(/[^a-z0-9\s-]/g, '')
-            .replace(/\s+/g, '-')
-            .slice(0, 50);
-
-        const eventNameSlug = slugify(options.eventName || 'visuel-esport');
         const formatSlug = slugify(formatDef.label);
+        const dimensions = formatDef.dimensions;
 
-        link.download = `Visuel_${eventNameSlug}_${formatSlug}.png`;
+        link.download = `${universeSlug}_${formatSlug}_${dimensions}_${timestamp}.png`;
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
@@ -87,8 +106,8 @@ const ImageResultPanel: React.FC<ImageResultPanelProps> = ({
         alert("Une erreur est survenue lors de la préparation du téléchargement. Le fichier original sera téléchargé.");
         // Fallback to downloading the original image
         const link = document.createElement('a');
-        link.href = imageSrc;
-        link.download = `Visuel_esport_original.png`;
+        link.href = `data:image/png;base64,${imageSrc}`;
+        link.download = `Visuel_${universeSlug}_original_${timestamp}.png`;
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
@@ -115,7 +134,7 @@ const ImageResultPanel: React.FC<ImageResultPanelProps> = ({
 
       <main className="flex-grow flex items-center justify-center p-4 overflow-auto">
         <div className="relative max-w-full max-h-full">
-          <img src={imageSrc} alt="Visuel généré" className="object-contain max-w-full max-h-full rounded-lg shadow-2xl shadow-black/50" />
+          <img src={`data:image/png;base64,${imageSrc}`} alt="Visuel généré" className="object-contain max-w-full max-h-full rounded-lg shadow-2xl shadow-black/50" />
            {qualityCheckResults && (
             <div className="absolute bottom-4 right-4">
               <QualityCheckPanel results={qualityCheckResults} />
@@ -130,77 +149,67 @@ const ImageResultPanel: React.FC<ImageResultPanelProps> = ({
           Télécharger
         </button>
         <button onClick={onDecline} className="col-span-1 flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-4 rounded-lg transition">
-            🖼️ Décliner
+            Décliner
         </button>
         <button onClick={onRegenerate} className="col-span-1 flex items-center justify-center gap-2 bg-gray-600 hover:bg-gray-700 text-white font-semibold py-3 px-4 rounded-lg transition">
-            🎲 Variante
+            Variante
         </button>
         <button onClick={() => setIsModificationMode(true)} className="col-span-1 flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 text-white font-semibold py-3 px-4 rounded-lg transition">
-            🎨 Modifier
+            Modifier
         </button>
       </footer>
       
       {isModificationMode && (
         <div className="absolute inset-0 bg-black/80 z-20 flex items-center justify-center p-4 animate-fade-in-up" onClick={() => setIsModificationMode(false)}>
-            <form onSubmit={handleSubmitModification} className="bg-gray-800 rounded-lg shadow-2xl w-full max-w-lg p-6 border border-gray-700" onClick={(e) => e.stopPropagation()}>
-                <h3 className="text-lg font-semibold text-gray-200 mb-4">Décrivez précisément ce que vous souhaitez modifier dans l'image actuelle :</h3>
+            <form onSubmit={handleSubmitModification} className="relative bg-gray-800 rounded-lg shadow-2xl w-full max-w-lg p-6 border border-gray-700" onClick={(e) => e.stopPropagation()}>
+                <button
+                    type="button"
+                    onClick={() => setIsModificationMode(false)}
+                    disabled={isModifying || isRecording || isCorrecting}
+                    className="absolute top-4 right-4 text-gray-400 hover:text-white transition-colors disabled:opacity-50"
+                    aria-label="Fermer"
+                >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                </button>
+                <h2 className="text-xl font-bold font-orbitron text-purple-300 mb-4 text-center">Modification du visuel</h2>
                 
-                <div className="relative">
+                {voiceError && <p className="text-xs text-red-400 mb-2">{voiceError}</p>}
+
+                <div className="flex items-end gap-2">
                     <textarea
                         value={modificationRequest}
                         onChange={(e) => setModificationRequest(e.target.value)}
-                        placeholder={isCorrecting ? "Correction du texte en cours..." : "Ex: Remplacer le personnage féminin par un robot futuriste"}
-                        className="w-full bg-gray-700 border rounded-lg px-4 py-3 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 resize-none transition-all duration-300 border-gray-600"
-                        rows={4}
+                        placeholder={isCorrecting ? "Transcription en cours..." : isRecording ? "Enregistrement en cours..." : "Décrivez la modification..."}
+                        className={`flex-grow bg-gray-700 border rounded-lg px-4 py-3 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 resize-none transition-all duration-300 border-gray-600 placeholder-scroll-animation ${isRecording ? 'recording-glow' : ''}`}
+                        rows={3}
                         disabled={isModifying || isRecording || isCorrecting}
                     />
-                </div>
-
-                {voiceError && <p className="text-xs text-red-400 mt-2">{voiceError}</p>}
-                
-                 <div className="mt-4 grid grid-cols-2 gap-3">
                     <button
                         type="button"
                         onClick={handleToggleRecording}
                         disabled={isModifying || isCorrecting}
-                        className={`w-full h-12 flex-shrink-0 p-3 rounded-lg transition-colors duration-200 flex items-center justify-center gap-2 ${
+                        className={`h-full p-3 rounded-lg transition-colors duration-200 flex items-center justify-center ${
                         isRecording 
                         ? 'bg-red-600 hover:bg-red-700 text-white' 
                         : 'bg-gray-600 hover:bg-gray-500 text-white'
                         }`}
                         aria-label={isRecording ? 'Arrêter l\'enregistrement' : 'Démarrer l\'enregistrement vocal'}
                     >
-                        <MicrophoneIcon className={`h-6 w-6 ${isRecording ? 'animate-pulse' : ''}`} />
-                        <span>{isRecording ? 'En cours...' : isCorrecting ? 'Correction...' : 'Voix'}</span>
+                        <MicrophoneIcon className={`h-5 w-5 ${isRecording ? 'animate-pulse' : ''}`} />
                     </button>
                     <button 
                         type="submit"
                         disabled={isModifying || isRecording || isCorrecting || !modificationRequest.trim()}
-                        className="w-full h-12 flex-shrink-0 p-3 rounded-lg transition flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 text-white disabled:bg-gray-500 disabled:cursor-not-allowed"
+                        className="h-full p-3 rounded-lg transition flex items-center justify-center bg-purple-600 hover:bg-purple-700 text-white disabled:bg-gray-500 disabled:cursor-not-allowed"
                         aria-label="Appliquer la modification"
                     >
-                        {isModifying ? (
-                            <>
-                                <SpinnerIcon className="w-6 h-6" />
-                                <span>Modification...</span>
-                            </>
-                        ) : isCorrecting ? (
-                             <>
-                                <SpinnerIcon className="w-6 h-6" />
-                                <span>Correction...</span>
-                            </>
+                        {isModifying || isCorrecting ? (
+                            <SpinnerIcon className={`w-5 h-5 ${isCorrecting ? 'text-purple-400' : ''}`} />
                         ) : (
-                            <>
-                                <SendIcon className="w-6 h-6" />
-                                <span>Appliquer</span>
-                            </>
+                            <SendIcon className="w-5 h-5" />
                         )}
-                    </button>
-                </div>
-
-                <div className="mt-6 flex justify-end gap-3">
-                    <button type="button" onClick={() => setIsModificationMode(false)} disabled={isModifying || isRecording || isCorrecting} className="bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-6 rounded-lg transition disabled:opacity-50">
-                        Annuler
                     </button>
                 </div>
             </form>

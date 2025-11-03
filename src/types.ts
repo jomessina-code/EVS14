@@ -35,6 +35,11 @@ export interface InspirationImage {
   mimeType: string;
 }
 
+export interface SavedSubject {
+  id: string;
+  description: string;
+}
+
 export interface EsportPromptOptions {
   gameType: GameType;
   graphicStyle: GraphicStyle;
@@ -56,8 +61,10 @@ export interface EsportPromptOptions {
   partnerZonePosition: 'bottom' | 'top';
   highResolution: boolean;
   hideText: boolean;
+  transparentBackground: boolean;
   modificationRequest?: string;
   universes: UniverseId[];
+  visualElementDescriptions: string[];
 }
 
 export interface QualityCheckResults {
@@ -90,11 +97,22 @@ export type TextConfig = {
   [key in TextBlock]: boolean;
 };
 
+export interface CropArea {
+  y: number; // Vertical start position as a percentage (0.0 to 1.0)
+}
+
+export interface AdaptationRequest {
+  format: Format;
+  textConfig: TextConfig;
+  cropArea?: CropArea;
+}
+
 export interface DerivedImage {
   format: Format;
   imageUrl: string | null;
   isGenerating: boolean;
   textConfig?: TextConfig;
+  cropArea?: CropArea;
 }
 
 export type ChatMessageSender = 'user' | 'assistant';
@@ -102,4 +120,9 @@ export type ChatMessageSender = 'user' | 'assistant';
 export interface ChatMessage {
   sender: ChatMessageSender;
   text: string;
+}
+
+export interface PromptChangeSummary {
+  kept: string[];
+  changed: string[];
 }

@@ -40,6 +40,7 @@ interface UseVoiceToTextOptions {
 export const useVoiceToText = ({ onCorrectedTranscript, onError }: UseVoiceToTextOptions) => {
   const [isRecording, setIsRecording] = useState(false);
   const [isCorrecting, setIsCorrecting] = useState(false);
+  const [soundLevel, setSoundLevel] = useState(0);
 
   const sessionPromiseRef = useRef<Promise<LiveSession> | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -47,6 +48,8 @@ export const useVoiceToText = ({ onCorrectedTranscript, onError }: UseVoiceToTex
   const scriptProcessorRef = useRef<ScriptProcessorNode | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const accumulatedTranscriptRef = useRef('');
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
   
   // Use a ref for the recording status to avoid stale closures in callbacks
   const isRecordingRef = useRef(false);
@@ -70,6 +73,12 @@ export const useVoiceToText = ({ onCorrectedTranscript, onError }: UseVoiceToTex
   }, [onError]);
   
   const cleanupAudioResources = useCallback(() => {
+    if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+    }
+    setSoundLevel(0);
+
     if (streamRef.current) {
         streamRef.current.getTracks().forEach(track => track.stop());
         streamRef.current = null;
@@ -78,6 +87,10 @@ export const useVoiceToText = ({ onCorrectedTranscript, onError }: UseVoiceToTex
         scriptProcessorRef.current.disconnect();
         scriptProcessorRef.current.onaudioprocess = null;
         scriptProcessorRef.current = null;
+    }
+    if (analyserRef.current) {
+        analyserRef.current.disconnect();
+        analyserRef.current = null;
     }
     if (sourceRef.current) {
         sourceRef.current.disconnect();
@@ -149,14 +162,38 @@ export const useVoiceToText = ({ onCorrectedTranscript, onError }: UseVoiceToTex
         
         if (context.state === 'suspended') await context.resume();
         
+        const source = context.createMediaStreamSource(stream);
+        sourceRef.current = source;
+        
+        const analyser = context.createAnalyser();
+        analyser.fftSize = 512;
+        analyser.smoothingTimeConstant = 0.6;
+        analyserRef.current = analyser;
+
+        source.connect(analyser);
+
+        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+        const updateLevel = () => {
+            if (!analyserRef.current || !isRecordingRef.current) return;
+            
+            analyserRef.current.getByteTimeDomainData(dataArray);
+            let sumSquares = 0.0;
+            for (const amplitude of dataArray) {
+                const val = (amplitude / 128.0) - 1.0;
+                sumSquares += val * val;
+            }
+            const rms = Math.sqrt(sumSquares / dataArray.length);
+            setSoundLevel(Math.min(1, rms * 2.5));
+            
+            animationFrameRef.current = requestAnimationFrame(updateLevel);
+        };
+        animationFrameRef.current = requestAnimationFrame(updateLevel);
+
         sessionPromiseRef.current = ai.live.connect({
             model: 'gemini-2.5-flash-native-audio-preview-09-2025',
             callbacks: {
                 onopen: () => {
-                    if (!audioContextRef.current || !streamRef.current || !isRecordingRef.current) return;
-                    
-                    const source = audioContextRef.current.createMediaStreamSource(streamRef.current);
-                    sourceRef.current = source;
+                    if (!audioContextRef.current || !sourceRef.current || !isRecordingRef.current) return;
                     
                     const scriptProcessor = audioContextRef.current.createScriptProcessor(4096, 1, 1);
                     scriptProcessorRef.current = scriptProcessor;
@@ -176,7 +213,7 @@ export const useVoiceToText = ({ onCorrectedTranscript, onError }: UseVoiceToTex
                             stopRecording();
                         });
                     };
-                    source.connect(scriptProcessor);
+                    sourceRef.current.connect(scriptProcessor);
                     scriptProcessor.connect(audioContextRef.current.destination);
                 },
                 onmessage: (message: LiveServerMessage) => {
@@ -237,5 +274,5 @@ export const useVoiceToText = ({ onCorrectedTranscript, onError }: UseVoiceToTex
     };
   }, [stopRecording]);
 
-  return { isRecording, isCorrecting, toggleRecording };
+  return { isRecording, isCorrecting, toggleRecording, soundLevel };
 };

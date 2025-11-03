@@ -113,6 +113,33 @@
         from { transform: rotate(0deg); }
         to { transform: rotate(360deg); }
       }
+
+      /* === RECORDING GLOW EFFECT === */
+      @keyframes recording-glow-anim {
+        0% { box-shadow: 0 0 3px #a78bfa, 0 0 5px #a78bfa, inset 0 0 3px #a78bfa; }
+        50% { box-shadow: 0 0 8px #d8b4fe, 0 0 12px #d8b4fe, inset 0 0 8px #d8b4fe; }
+        100% { box-shadow: 0 0 3px #a78bfa, 0 0 5px #a78bfa, inset 0 0 3px #a78bfa; }
+      }
+      .recording-glow {
+        animation: recording-glow-anim 1.5s ease-in-out infinite;
+        border-color: #c084fc !important; /* purple-400 */
+      }
+      
+      /* === EMOJI PULSE ANIMATION === */
+      .pulse-emoji {
+        animation: pulse-emoji-anim 2s ease-in-out infinite;
+        display: inline-block; /* Needed for transform */
+      }
+      @keyframes pulse-emoji-anim {
+        0%, 100% {
+          transform: scale(1);
+          text-shadow: 0 0 5px #fde047, 0 0 10px #fde047;
+        }
+        50% {
+          transform: scale(1.15);
+          text-shadow: 0 0 10px #fde047, 0 0 20px #fde047, 0 0 30px #fde047;
+        }
+      }
     </style>
   <script type="importmap">
 {

@@ -3,6 +3,7 @@ import type { ChatMessage } from '../../types';
 import SpinnerIcon from '../icons/SpinnerIcon';
 import MicrophoneIcon from '../icons/MicrophoneIcon';
 import { useVoiceToText } from '../../hooks/useVoiceToText';
+import SendIcon from '../icons/SendIcon';
 
 interface PromptEditorModalProps {
   isOpen: boolean;
@@ -35,6 +36,9 @@ const PromptEditorModal: React.FC<PromptEditorModalProps> = ({
 
   const handleToggleRecording = () => {
     setVoiceError('');
+    if (!isRecording) {
+        setUserInput('');
+    }
     toggleRecording();
   };
 
@@ -92,11 +96,11 @@ const PromptEditorModal: React.FC<PromptEditorModalProps> = ({
       role="dialog"
     >
       <div 
-        className="bg-gray-800 rounded-lg shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col p-6 border border-gray-700"
+        className="bg-gray-800 rounded-lg shadow-2xl w-full max-w-3xl max-h-[95vh] flex flex-col p-4 border border-gray-700"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex justify-between items-center mb-4 flex-shrink-0">
-          <h2 className="text-xl font-bold font-orbitron text-purple-300">💬 Prévisualisation & édition du prompt</h2>
+        <div className="flex justify-between items-center mb-2 flex-shrink-0">
+          <h2 className="text-xl font-bold font-orbitron text-purple-300">Prévisualisation & édition du prompt</h2>
           <button onClick={onClose} disabled={isAssistantResponding || isRecording || isCorrecting} className="text-gray-400 hover:text-white text-3xl leading-none">&times;</button>
         </div>
         
@@ -129,8 +133,8 @@ const PromptEditorModal: React.FC<PromptEditorModalProps> = ({
                 value={userInput}
                 onChange={(e) => setUserInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder={isRecording ? "Enregistrement en cours..." : isCorrecting ? "Correction du texte en cours..." : "Décrivez les ajustements que vous souhaitez apporter..."}
-                className="flex-grow bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 resize-none"
+                placeholder={isRecording ? "Enregistrement en cours..." : isCorrecting ? "Transcription en cours..." : "Ajoutez vos idées d’ajustements"}
+                className={`flex-grow bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 resize-none ${isRecording ? 'recording-glow' : ''}`}
                 rows={2}
                 disabled={isAssistantResponding || isRecording || isCorrecting}
               />
@@ -148,19 +152,19 @@ const PromptEditorModal: React.FC<PromptEditorModalProps> = ({
                 <MicrophoneIcon className={`h-5 w-5 ${isRecording ? 'animate-pulse' : ''}`} />
               </button>
               <button type="submit" disabled={isAssistantResponding || isRecording || isCorrecting || !userInput.trim()} className="h-full bg-purple-600 hover:bg-purple-700 disabled:bg-gray-500 text-white font-bold p-3 rounded-lg transition-colors duration-200 flex items-center justify-center">
-                {isCorrecting ? <SpinnerIcon className="w-5 h-5" /> : <svg xmlns="http://www.w.org/2000/svg" className="h-5 w-5" viewBox="http://www.w3.org/2000/svg" fill="currentColor"><path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" /></svg>}
+                {isCorrecting ? <SpinnerIcon className="w-5 h-5 text-purple-400" /> : <SendIcon className="w-5 h-5" />}
               </button>
             </div>
           </form>
         </div>
 
-        <div className="mt-6 flex-shrink-0">
+        <div className="mt-4 flex-shrink-0">
           <button
             onClick={onFinalize}
             disabled={isAssistantResponding || isRecording || isCorrecting}
             className="w-full flex items-center justify-center bg-green-600 hover:bg-green-700 disabled:bg-gray-500 disabled:cursor-not-allowed text-white font-bold py-3 px-4 rounded-lg transition-all duration-300"
           >
-            ✅ Valider et utiliser ce prompt
+            Valider et utiliser ce prompt
           </button>
         </div>
       </div>

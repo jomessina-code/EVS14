@@ -1,5 +1,3 @@
-
-
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import ControlsPanel from './components/ControlsPanel/ControlsPanel';
 import WelcomePanel from './components/WelcomePanel';
@@ -8,12 +6,13 @@ import ImageResultPanel from './components/ImageResultPanel';
 import Toast from './components/Toast';
 import FormatManager from './components/FormatManager';
 import PromptEditorModal from './components/ControlsPanel/PromptEditorModal';
-import PricingModal from './components/PricingModal'; // Import the new modal
+import PricingModal from './components/PricingModal';
+import { ConfirmationModal, ModificationConfirmationModal } from './components/ConfirmationModal';
 import SelectApiKeyPanel from './components/SelectApiKeyPanel';
-import ApiKeyErrorPanel from './components/ApiKeyErrorPanel';
-import type { EsportPromptOptions, QualityCheckResults, GenerationHistoryItem, UniverseId, Format, DerivedImage, ChatMessage, UniversePreset, TextConfig, TextStyle } from './types';
-import { generateEsportImage, adaptEsportImage, generateEsportPrompt, refinePrompt, suggestUniversePreset, verifyNoMargins, verifyTextFidelity, addTextToImage, determineTextStyle } from './services/geminiService';
+import type { EsportPromptOptions, QualityCheckResults, GenerationHistoryItem, UniverseId, Format, DerivedImage, ChatMessage, UniversePreset, TextConfig, TextStyle, PromptChangeSummary, TextBlock, SavedSubject, AdaptationRequest } from './types';
+import { generateEsportImage, adaptEsportImage, generateEsportPrompt, refinePrompt, suggestUniversePreset, addTextToImage, determineTextStyle, refinePromptForModification, summarizePromptChanges } from './services/geminiService';
 import { UNIVERSE_PRESETS } from './constants/options';
+import { cropImage } from './utils/image';
 
 type View = 'welcome' | 'loading' | 'result';
 
@@ -23,8 +22,9 @@ const initialOptions: EsportPromptOptions = {
   graphicStyle: "Cyberpunk / Néon",
   ambiance: "",
   visualElements: "Personnage central",
+  visualElementDescriptions: [],
   elementSize: 75,
-  format: "A3 / A2 (Vertical)",
+  format: "1:1 (Carré)",
   effectsIntensity: 50,
   language: "français",
   customPrompt: "",
@@ -39,6 +39,7 @@ const initialOptions: EsportPromptOptions = {
   partnerZonePosition: 'bottom',
   highResolution: true,
   hideText: false,
+  transparentBackground: false,
 };
 
 const App: React.FC = () => {
@@ -78,84 +79,94 @@ const App: React.FC = () => {
   
   const [customPresets, setCustomPresets] = useState<UniversePreset[]>([]);
   
-  const [isPricingModalOpen, setIsPricingModalOpen] = useState(false); // State for pricing modal
+  const [isPricingModalOpen, setIsPricingModalOpen] = useState(false);
   
   const [isSuggestingPreset, setIsSuggestingPreset] = useState(false);
 
-  const [isPanelOpen, setIsPanelOpen] = useState(window.innerWidth >= 768);
+  const [isPanelOpen, setIsPanelOpen] = useState(false);
   
   const [loadingState, setLoadingState] = useState({ progress: 0, message: '' });
 
-  const [isKeyReady, setIsKeyReady] = useState(false);
-  const [isAiStudioEnv, setIsAiStudioEnv] = useState<boolean | null>(null);
+  const [isConfirmationModalOpen, setIsConfirmationModalOpen] = useState(false);
+  const [isModificationConfirmationOpen, setIsModificationConfirmationOpen] = useState(false);
+  const [refinedPromptForConfirmation, setRefinedPromptForConfirmation] = useState<string | null>(null);
+  const [promptChangeSummary, setPromptChangeSummary] = useState<PromptChangeSummary | null>(null);
+  const [isPreparingModification, setIsPreparingModification] = useState(false);
 
-  const isLoading = isGenerating || isModifying || isGeneratingAdaptations || isAssistantResponding || isSuggestingPreset;
+  const [savedSubjects, setSavedSubjects] = useState<SavedSubject[]>([]);
+  
+  const [isApiKeyReady, setIsApiKeyReady] = useState(false);
+
+  const isLoading = isGenerating || isModifying || isGeneratingAdaptations || isAssistantResponding || isSuggestingPreset || isPreparingModification;
   
   const showToast = useCallback((message: string) => {
     setToastMessage(message);
     setTimeout(() => setToastMessage(''), 5000);
   }, []);
+  
+  const handleApiError = useCallback((err: unknown) => {
+    const errorMessage = err instanceof Error ? err.message : "Une erreur est survenue.";
+    if (errorMessage === 'API_KEY_INVALID') {
+        showToast("Votre clé API est invalide ou manquante. Veuillez en sélectionner une nouvelle.");
+        setIsApiKeyReady(false); // Trigger the selection panel
+    } else {
+        setError(errorMessage);
+        showToast(errorMessage);
+    }
+    // Reset view and loading states to a safe state
+    setView('welcome');
+    setIsGenerating(false);
+    setIsModifying(false);
+    setIsGeneratingAdaptations(false);
+    setIsAssistantResponding(false);
+    setIsSuggestingPreset(false);
+    setIsPreparingModification(false);
+    setIsPanelOpen(true);
+  }, [showToast]);
 
   useEffect(() => {
-    const checkEnvironmentAndKey = async () => {
-      // @ts-ignore
-      const isAiStudio = window.aistudio && typeof window.aistudio.hasSelectedApiKey === 'function';
-      setIsAiStudioEnv(isAiStudio);
-
-      if (isAiStudio) {
-        try {
-            // @ts-ignore
-            const hasKey = await window.aistudio.hasSelectedApiKey();
-            setIsKeyReady(hasKey);
-        } catch (e) {
-            console.error("Error checking AI Studio key:", e);
-            setIsKeyReady(false);
+    const checkApiKey = async () => {
+      // The `window.aistudio` object might not be available immediately.
+      // A short delay can help ensure it's loaded.
+      setTimeout(async () => {
+        if (window.aistudio && await window.aistudio.hasSelectedApiKey()) {
+          setIsApiKeyReady(true);
         }
-      } else {
-        // Standard environment like Vercel. The key comes from env vars.
-        // A service call will fail if it's missing, which will set isKeyReady to false.
-        const hasKey = !!process.env.API_KEY;
-        setIsKeyReady(hasKey);
-      }
+      }, 100);
     };
-    checkEnvironmentAndKey();
+    checkApiKey();
   }, []);
 
-  const handleKeySelection = async () => {
-    // @ts-ignore
-    if (window.aistudio && typeof window.aistudio.openSelectKey === 'function') {
-        try {
-            // @ts-ignore
-            await window.aistudio.openSelectKey();
-            // Assume success and update UI immediately to avoid race conditions and allow the app to proceed.
-            // The next API call will validate the key.
-            setIsKeyReady(true);
-        } catch (e) {
-            console.error("Key selection was cancelled or failed.", e);
-            showToast("La sélection de la clé API a été annulée ou a échoué.");
-        }
-    } else {
-        showToast("L'environnement de sélection de clé n'est pas disponible.");
+  const handleSelectKey = async () => {
+    try {
+      await window.aistudio.openSelectKey();
+      // Optimistically assume key is now selected to unblock the UI and avoid race conditions.
+      setIsApiKeyReady(true);
+      showToast("Clé API sélectionnée. Vous pouvez maintenant générer des visuels.");
+    } catch (e) {
+      console.error("Error opening key selection:", e);
+      showToast("La sélection de la clé a été annulée ou a échoué.");
     }
   };
+
 
   const setOptions: React.Dispatch<React.SetStateAction<EsportPromptOptions>> = (value) => {
     const newOptions = typeof value === 'function' ? value(options) : value;
 
     if (isPromptCustomized) {
-      // Any change to an option that affects the prompt should reset the customization.
       const PROMPT_AFFECTING_KEYS: (keyof EsportPromptOptions)[] = [
         'universes', 'gameType', 'graphicStyle', 'ambiance', 'visualElements', 
         'inspirationImage', 'eventName', 'baseline', 'eventLocation', 'eventDate',
         'textLock', 'hideText', 'reservePartnerZone', 'partnerZoneHeight', 
-        'partnerZonePosition', 'effectsIntensity', 'elementSize'
+        'partnerZonePosition', 'effectsIntensity', 'elementSize', 'transparentBackground',
+        'visualElementDescriptions'
       ];
 
       const hasChanged = PROMPT_AFFECTING_KEYS.some(key => {
-        if (key === 'universes') {
-          const oldUniverses = options.universes.slice().sort();
-          const newUniverses = (newOptions.universes || []).slice().sort();
-          return JSON.stringify(oldUniverses) !== JSON.stringify(newUniverses);
+        if (key === 'universes' || key === 'visualElementDescriptions') {
+            const oldArray = (options[key] as string[]).slice().sort();
+            const newArray = ((newOptions as any)[key] || []).slice().sort();
+            return JSON.stringify(oldArray) !== JSON.stringify(newArray);
         }
         if (key === 'inspirationImage') {
             return options.inspirationImage?.base64 !== newOptions.inspirationImage?.base64;
@@ -165,8 +176,6 @@ const App: React.FC = () => {
 
       if (hasChanged) {
         setIsPromptCustomized(false);
-        // The reset is now silent for a smoother UX.
-        // showToast("🎨 Options modifiées, le prompt personnalisé a été réinitialisé.");
       }
     }
     
@@ -179,18 +188,23 @@ const App: React.FC = () => {
       if (savedCustomPresets) {
         setCustomPresets(JSON.parse(savedCustomPresets));
       }
+      const savedSubjectsData = localStorage.getItem('savedSubjects');
+      if (savedSubjectsData) {
+        setSavedSubjects(JSON.parse(savedSubjectsData));
+      }
     } catch (e) {
-      console.error("Failed to load custom presets from localStorage", e);
+      console.error("Failed to load custom data from localStorage", e);
     }
   }, []);
 
   useEffect(() => {
     try {
       localStorage.setItem('customUniversePresets', JSON.stringify(customPresets));
+      localStorage.setItem('savedSubjects', JSON.stringify(savedSubjects));
     } catch (e) {
-      console.error("Failed to save custom presets to localStorage", e);
+      console.error("Failed to save custom data to localStorage", e);
     }
-  }, [customPresets]);
+  }, [customPresets, savedSubjects]);
 
   const allPresets = [...UNIVERSE_PRESETS, ...customPresets];
 
@@ -214,7 +228,6 @@ const App: React.FC = () => {
     }
   }, [history]);
   
-  // Effect to update the prompt based on options, if it has not been manually customized
   useEffect(() => {
     if (isPromptCustomized) return;
   
@@ -223,7 +236,6 @@ const App: React.FC = () => {
   }, [options, allPresets, isPromptCustomized]);
 
   const handleOpenPromptEditor = () => {
-    // When opening the modal, initialize the chat history based on the current prompt
     setPromptHistory([
       {
         sender: 'assistant',
@@ -244,7 +256,7 @@ const App: React.FC = () => {
   
   const handleDeleteHistoryItem = (itemId: string) => {
     setHistory(prev => prev.filter(item => item.id !== itemId));
-    showToast("🗑️ Version supprimée de l'historique.");
+    showToast("Version supprimée de l'historique.");
   };
 
   const handleUniverseToggle = (universeId: UniverseId) => {
@@ -275,18 +287,13 @@ const App: React.FC = () => {
     try {
       const refinedPrompt = await refinePrompt(currentPromptRef.current, userFeedback);
       currentPromptRef.current = refinedPrompt;
-      setIsPromptCustomized(true); // Mark prompt as customized
+      setIsPromptCustomized(true);
       setPromptHistory(prev => [
         ...prev,
         { sender: 'assistant', text: `J'ai mis à jour le prompt :\n\n${refinedPrompt}` }
       ]);
     } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : "Une erreur est survenue.";
-      showToast(`❌ Erreur de l'assistant: ${errorMessage}`);
-      setPromptHistory(prev => [
-        ...prev,
-        { sender: 'assistant', text: `Désolé, une erreur est survenue. Veuillez réessayer.` }
-      ]);
+      handleApiError(err);
     } finally {
       setIsAssistantResponding(false);
     }
@@ -294,509 +301,401 @@ const App: React.FC = () => {
   
   const handleFinalizePrompt = () => {
     setIsPromptEditorOpen(false);
-    showToast("✅ Prompt validé ! Vous pouvez lancer la génération.");
+    if(isPromptCustomized) {
+      showToast("Prompt mis à jour !");
+    }
+  };
+
+  const handleRestoreFromHistory = (item: GenerationHistoryItem) => {
+    _setOptions(item.options);
+    setGeneratedImage(item.imageUrl);
+    setMasterImageNoText(item.masterImageNoText || item.imageUrl);
+    setCurrentImageOptions(item.options);
+    setGeneratedPrompt(item.prompt);
+    setQualityCheckResults(item.qualityCheckResults);
+    setCurrentTextStyle(item.textStyle || null);
+    setIsModificationMode(false);
+    setModificationRequest('');
+    setView('result');
+    setIsPanelOpen(false);
+    showToast("Version restaurée depuis l'historique.");
+  };
+
+  const handleAddSavedSubject = (description: string) => {
+    if (description.trim() && !savedSubjects.some(s => s.description.toLowerCase() === description.toLowerCase().trim())) {
+      const newSubject: SavedSubject = { id: Date.now().toString(), description: description.trim() };
+      setSavedSubjects(prev => [newSubject, ...prev]);
+    }
+  };
+
+  const handleDeleteSavedSubject = (subjectId: string) => {
+    const subjectToDelete = savedSubjects.find(s => s.id === subjectId);
+    if (!subjectToDelete) return;
+
+    setSavedSubjects(prev => prev.filter(s => s.id !== subjectId));
+    setOptions(prev => ({
+        ...prev,
+        visualElementDescriptions: prev.visualElementDescriptions.filter(d => d !== subjectToDelete.description)
+    }));
+    showToast("Sujet supprimé.");
+  };
+
+  const handleSubjectToggle = (description: string) => {
+    setOptions(prev => {
+        const newDescriptions = prev.visualElementDescriptions.includes(description)
+            ? prev.visualElementDescriptions.filter(d => d !== description)
+            : [...prev.visualElementDescriptions, description];
+        return { ...prev, visualElementDescriptions: newDescriptions };
+    });
+  };
+
+  const startGeneration = async () => {
+    setIsConfirmationModalOpen(false);
+    setIsPanelOpen(false);
+    setView('loading');
+    setIsGenerating(true);
+    setError(null);
+    setLoadingState({ progress: 0, message: 'Préparation de la génération...' });
+
+    try {
+        const finalPrompt = isPromptCustomized ? currentPromptRef.current : generateEsportPrompt(options, allPresets);
+        setLoadingState({ progress: 25, message: 'Génération du visuel...' });
+
+        const { imageBase64, prompt, marginsVerified, textVerified } = await generateEsportImage(options, allPresets, finalPrompt);
+
+        setGeneratedPrompt(prompt);
+        setMasterImageNoText(imageBase64);
+        setCurrentImageOptions(options);
+        setQualityCheckResults({ resolution: options.highResolution, ratio: true, margins: marginsVerified, text: textVerified });
+        setDerivedImages({} as Record<Format, DerivedImage>);
+
+        const hasText = !options.hideText && (options.eventName || options.baseline || options.eventLocation || options.eventDate);
+
+        if (hasText && !options.transparentBackground) {
+            setLoadingState({ progress: 75, message: 'Analyse du style du texte...' });
+            const textStyle = await determineTextStyle(imageBase64);
+            setCurrentTextStyle(textStyle);
+            setLoadingState({ progress: 90, message: 'Ajout du texte...' });
+            const { imageBase64: finalImage } = await addTextToImage(imageBase64, 'image/png', options, options.format, textStyle);
+            setGeneratedImage(finalImage);
+        } else {
+            setGeneratedImage(imageBase64);
+        }
+
+        addToHistory({
+            imageUrl: imageBase64,
+            masterImageNoText: imageBase64,
+            options,
+            prompt,
+            qualityCheckResults: { resolution: options.highResolution, ratio: true, margins: marginsVerified, text: textVerified },
+            textStyle: currentTextStyle
+        });
+
+        setLoadingState({ progress: 100, message: 'Terminé !' });
+        setView('result');
+
+    } catch (err: unknown) {
+        handleApiError(err);
+    } finally {
+        setIsGenerating(false);
+    }
+  };
+
+  const executeModification = async () => {
+    if (!refinedPromptForConfirmation || !masterImageNoText) return;
+    
+    setIsModificationConfirmationOpen(false);
+    setView('loading');
+    setIsModifying(true);
+    setError(null);
+    setLoadingState({ progress: 0, message: 'Application de vos modifications...' });
+
+    try {
+        const modifiedOptions = { ...currentImageOptions, modificationRequest };
+        setLoadingState({ progress: 25, message: 'Génération du nouveau visuel de base...' });
+
+        const { imageBase64: newMasterImageNoText, prompt: newPrompt, marginsVerified, textVerified } = await generateEsportImage(
+            modifiedOptions,
+            allPresets,
+            refinedPromptForConfirmation
+        );
+        
+        setMasterImageNoText(newMasterImageNoText);
+        setGeneratedPrompt(newPrompt);
+        setCurrentImageOptions(modifiedOptions);
+        setModificationRequest('');
+        setRefinedPromptForConfirmation(null);
+        setPromptChangeSummary(null);
+        setLoadingState({ progress: 75, message: 'Analyse du nouveau style...' });
+        
+        const hasText = !currentImageOptions.hideText && (currentImageOptions.eventName || currentImageOptions.baseline || currentImageOptions.eventLocation || currentImageOptions.eventDate);
+
+        if (hasText && !currentImageOptions.transparentBackground) {
+            const newTextStyle = await determineTextStyle(newMasterImageNoText);
+            setCurrentTextStyle(newTextStyle);
+            setLoadingState({ progress: 90, message: 'Application du texte...' });
+            const { imageBase64: finalImage } = await addTextToImage(newMasterImageNoText, 'image/png', currentImageOptions, currentImageOptions.format, newTextStyle);
+            setGeneratedImage(finalImage);
+        } else {
+            setGeneratedImage(newMasterImageNoText);
+        }
+
+        addToHistory({
+            imageUrl: newMasterImageNoText,
+            masterImageNoText: newMasterImageNoText,
+            options: modifiedOptions,
+            prompt: newPrompt,
+            qualityCheckResults: { resolution: true, ratio: true, margins: marginsVerified, text: textVerified },
+            textStyle: currentTextStyle,
+        });
+
+        setLoadingState({ progress: 100, message: 'Terminé !' });
+        setView('result');
+    } catch (err: unknown) {
+        handleApiError(err);
+    } finally {
+        setIsModifying(false);
+    }
+  };
+  
+  const handleStartModification = async () => {
+    if (!modificationRequest.trim() || !generatedPrompt) return;
+    setIsModificationMode(false);
+    setIsModificationConfirmationOpen(true);
+    setIsPreparingModification(true);
+    setPromptChangeSummary(null);
+    setError(null);
+
+    try {
+        const refinedPrompt = await refinePromptForModification(generatedPrompt, modificationRequest);
+        setRefinedPromptForConfirmation(refinedPrompt);
+        const summary = await summarizePromptChanges(generatedPrompt, refinedPrompt, modificationRequest);
+        setPromptChangeSummary(summary);
+    } catch(err) {
+        handleApiError(err);
+        setIsModificationConfirmationOpen(false);
+    } finally {
+        setIsPreparingModification(false);
+    }
+  };
+  
+  const handleGenerateAdaptations = async (adaptations: AdaptationRequest[]) => {
+    if (!masterImageNoText) return;
+    setIsGeneratingAdaptations(true);
+
+    const newDerivedImages = { ...derivedImages };
+    adaptations.forEach(({ format, textConfig, cropArea }) => {
+        newDerivedImages[format] = {
+            format,
+            imageUrl: null,
+            isGenerating: true,
+            textConfig: textConfig,
+            cropArea: cropArea,
+        };
+    });
+    setDerivedImages(newDerivedImages);
+
+    for (const { format, textConfig, cropArea } of adaptations) {
+        try {
+            const adaptationOptions: EsportPromptOptions = { ...currentImageOptions };
+            (Object.keys(textConfig) as TextBlock[]).forEach(key => {
+                if (!textConfig[key]) {
+                    (adaptationOptions as any)[key] = '';
+                }
+            });
+
+            let adaptedBase: string;
+
+            if (format === '3:1 (Bannière)' && cropArea && currentImageOptions.format === '1:1 (Carré)') {
+                const dataUrl = await cropImage(
+                    `data:image/png;base64,${masterImageNoText}`,
+                    { x: 0, y: cropArea.y, width: 1, height: 1 / 3 }
+                );
+                adaptedBase = dataUrl.split(',')[1];
+            } else {
+                const { imageBase64 } = await adaptEsportImage(masterImageNoText, 'image/png', adaptationOptions, format, cropArea);
+                adaptedBase = imageBase64;
+            }
+            
+            const hasText = Object.values(textConfig).some(v => v);
+            let finalImage = adaptedBase;
+            if (hasText && currentTextStyle) {
+                const { imageBase64: adaptedWithText } = await addTextToImage(adaptedBase, 'image/png', adaptationOptions, format, currentTextStyle);
+                finalImage = adaptedWithText;
+            }
+
+            setDerivedImages(prev => ({
+                ...prev,
+                [format]: { ...prev[format], imageUrl: finalImage, isGenerating: false },
+            }));
+        } catch (err: unknown) {
+            console.error(`Failed to adapt for format ${format}`, err);
+            const errorMessage = err instanceof Error ? err.message : "Erreur inconnue";
+            showToast(`Erreur format ${format}: ${errorMessage}`);
+            setDerivedImages(prev => ({
+                ...prev,
+                [format]: { ...prev[format], imageUrl: null, isGenerating: false },
+            }));
+        }
+    }
+
+    setIsGeneratingAdaptations(false);
   };
   
   const handleAddPreset = (presetData: Omit<UniversePreset, 'id' | 'isCustom' | 'dominant'>) => {
     const newPreset: UniversePreset = {
-      ...presetData,
-      id: `custom_${Date.now()}`,
-      isCustom: true,
-      dominant: false,
+        ...presetData,
+        id: `custom_${Date.now()}`,
+        isCustom: true,
+        dominant: false,
     };
     setCustomPresets(prev => [...prev, newPreset]);
-    showToast(`✅ Preset "${newPreset.label}" créé !`);
+    showToast(`Univers "${presetData.label}" créé !`);
   };
 
   const handleUpdatePreset = (presetId: UniverseId, updatedData: Omit<UniversePreset, 'id' | 'isCustom' | 'dominant'>) => {
-    setCustomPresets(prev => prev.map(p => {
-      if (p.id === presetId) {
-        return {
-          ...p,
-          ...updatedData,
-        };
-      }
-      return p;
-    }));
-    showToast(`✅ Preset "${updatedData.label}" mis à jour !`);
+      setCustomPresets(prev => prev.map(p => p.id === presetId ? { ...p, ...updatedData } : p));
+      showToast(`Univers "${updatedData.label}" mis à jour !`);
   };
 
   const handleDeletePreset = (presetId: UniverseId) => {
-    if (window.confirm("Êtes-vous sûr de vouloir supprimer ce preset ? Cette action est irréversible.")) {
       setCustomPresets(prev => prev.filter(p => p.id !== presetId));
       setOptions(prev => ({
-        ...prev,
-        universes: prev.universes.filter(id => id !== presetId)
+          ...prev,
+          universes: prev.universes.filter(id => id !== presetId)
       }));
-      showToast("🗑️ Preset supprimé.");
-    }
+      showToast(`Univers supprimé.`);
   };
 
-  const handleSuggestPreset = async (theme: string): Promise<Omit<UniversePreset, 'id' | 'isCustom' | 'dominant'> | null> => {
-    setIsSuggestingPreset(true);
-    setError(null);
-    try {
-        const newPresetData = await suggestUniversePreset(theme);
-        showToast(`💡 Suggestion "${newPresetData.label}" prête !`);
-        return newPresetData;
-    } catch (err: unknown) {
-        const errorMessage = err instanceof Error ? err.message : "Erreur lors de la suggestion d'univers.";
-        if (errorMessage === 'API_KEY_INVALID') {
-            showToast("❌ Clé API invalide ou non autorisée. Veuillez en sélectionner une nouvelle.");
-            setIsKeyReady(false);
-        } else {
-            showToast(`❌ Erreur: ${errorMessage}`);
-        }
-        return null;
-    } finally {
-        setIsSuggestingPreset(false);
-    }
+  const handleSuggestPreset = async (theme: string) => {
+      setIsSuggestingPreset(true);
+      setError(null);
+      try {
+          const preset = await suggestUniversePreset(theme);
+          showToast("Suggestion d'univers générée !");
+          return preset;
+      } catch (err: unknown) {
+          handleApiError(err);
+          return null;
+      } finally {
+          setIsSuggestingPreset(false);
+      }
   };
-
-    const runGenerationPipeline = useCallback(async (
-        pipelineOptions: EsportPromptOptions,
-        pipelinePromptOverride?: string
-    ) => {
-        setIsGenerating(true);
-        setView('loading');
-        setLoadingState({ progress: 10, message: 'Initialisation de la matrice créative...' });
-
-        try {
-            // Step 1: Generate a 1:1 square text-free base image for better composition.
-            setLoadingState({ progress: 20, message: 'Génération du fond visuel...' });
-            const optionsForSquare: EsportPromptOptions = { ...pipelineOptions, format: "1:1 (Carré)" };
-            const { imageBase64: squareBase64_noText, prompt: actualPrompt } = await generateEsportImage(
-                optionsForSquare,
-                allPresets,
-                pipelinePromptOverride
-            );
-            
-            const masterImageForAdaptation = `data:image/png;base64,${squareBase64_noText}`;
-            setMasterImageNoText(masterImageForAdaptation);
-
-            // Step 2: Determine text style from the master image.
-            setLoadingState({ progress: 40, message: 'Analyse du style typographique...' });
-            const newTextStyle = await determineTextStyle(squareBase64_noText);
-            setCurrentTextStyle(newTextStyle);
-
-            // Step 3: Adapt the square image to the target format if it's not square.
-            let finalImageBase64_noText = squareBase64_noText;
-            if (pipelineOptions.format !== "1:1 (Carré)") {
-                setLoadingState({ progress: 50, message: 'Extension de l\'univers pour le format final...' });
-                const { imageBase64: adaptedImageBase64_noText } = await adaptEsportImage(
-                    squareBase64_noText, 'image/png', pipelineOptions, pipelineOptions.format
-                );
-                finalImageBase64_noText = adaptedImageBase64_noText;
-            }
-            
-            // Step 4: Add text to the final format if required, using the determined style.
-            let finalImageBase64_withText = finalImageBase64_noText;
-            const hasTextContent = !!(pipelineOptions.eventName.trim() || pipelineOptions.baseline.trim() || pipelineOptions.eventLocation.trim() || pipelineOptions.eventDate.trim());
-            const shouldHaveText = !pipelineOptions.hideText && hasTextContent;
-
-            if (shouldHaveText) {
-                setLoadingState({ progress: 80, message: 'Intégration de la typographie...' });
-                const { imageBase64: imageWithText } = await addTextToImage(
-                    finalImageBase64_noText, 'image/png', pipelineOptions, pipelineOptions.format, newTextStyle
-                );
-                finalImageBase64_withText = imageWithText;
-            }
-
-            // Step 5: Run quality checks.
-            setLoadingState({ progress: 90, message: 'Application des finitions et contrôle qualité...' });
-            const expectedText = (shouldHaveText && pipelineOptions.textLock)
-                ? `${pipelineOptions.eventName} ${pipelineOptions.baseline} ${pipelineOptions.eventLocation} ${pipelineOptions.eventDate}`.replace(/\s+/g, ' ').trim()
-                : "";
-
-            const [marginsVerified, textVerified] = await Promise.all([
-                verifyNoMargins(finalImageBase64_withText),
-                verifyTextFidelity(finalImageBase64_withText, expectedText),
-            ]);
-            const finalQualityCheckResults = { resolution: pipelineOptions.highResolution, ratio: true, margins: marginsVerified, text: textVerified };
-            
-            // Step 6: Update UI state.
-            const finalImageUrl = `data:image/png;base64,${finalImageBase64_withText}`;
-            setGeneratedImage(finalImageUrl);
-            setGeneratedPrompt(actualPrompt);
-            setCurrentImageOptions(pipelineOptions);
-            setQualityCheckResults(finalQualityCheckResults);
-            
-            setView('result');
-            showToast("✅ Visuel principal généré !");
-            addToHistory({ 
-                imageUrl: finalImageUrl, 
-                masterImageNoText: masterImageForAdaptation,
-                options: pipelineOptions, 
-                prompt: actualPrompt, 
-                qualityCheckResults: finalQualityCheckResults,
-                textStyle: newTextStyle
-            });
-        } catch (err: unknown) {
-            const errorMessage = err instanceof Error ? err.message : "Erreur lors de la génération du visuel.";
-            if (errorMessage === 'API_KEY_INVALID') {
-                showToast("❌ Clé API manquante, invalide ou non autorisée. Veuillez vérifier votre configuration.");
-                setIsKeyReady(false);
-            } else {
-                showToast(`❌ Erreur: ${errorMessage}`);
-            }
-            setView('welcome');
-        } finally {
-            setIsGenerating(false);
-        }
-    }, [allPresets, addToHistory, showToast]);
-
-
-  const handleGenerate = useCallback(() => {
-    setIsPanelOpen(false);
-    setIsModificationMode(false);
-    setDerivedImages({} as Record<Format, DerivedImage>);
-    setMasterImageNoText(null);
-    runGenerationPipeline(options, isPromptCustomized ? currentPromptRef.current : undefined);
-  }, [options, isPromptCustomized, runGenerationPipeline]);
-
-  const handleGenerateVariation = async () => {
-    setDerivedImages({} as Record<Format, DerivedImage>);
-    // We pass the prompt from the *previous* generation to get a true variation of it
-    runGenerationPipeline(currentImageOptions, generatedPrompt);
-  };
-
-  const handleTargetedRegeneration = async () => {
-    if (!modificationRequest.trim()) {
-      showToast("Veuillez préciser ce que vous souhaitez modifier.");
-      return;
-    }
-    if (!generatedImage) return;
-
-    setIsModificationMode(false);
-    setIsModifying(true);
-    setError(null);
-    setView('loading');
-    setLoadingState({ progress: 10, message: 'Analyse de la demande de modification...' });
-
-    const previousImage = generatedImage;
-
-    setTimeout(async () => {
-        try {
-            setLoadingState({ progress: 30, message: 'Préparation de la retouche créative...' });
-            
-            const base64 = previousImage.split(',')[1];
-            const mimeType = previousImage.match(/:(.*?);/)?.[1] || 'image/png';
-
-            const modificationOptions: EsportPromptOptions = {
-                ...currentImageOptions,
-                inspirationImage: { base64, mimeType },
-                modificationRequest: modificationRequest,
-            };
-            
-            // Step 1: Generate new background based on modification request.
-            setLoadingState({ progress: 60, message: 'Application des modifications...' });
-            const { imageBase64: newBgBase64, prompt: newPrompt } = await generateEsportImage(modificationOptions, allPresets);
-            
-            // Step 2: Determine a new text style for the modified background.
-            setLoadingState({ progress: 75, message: 'Recalcul du style typographique...' });
-            const newTextStyle = await determineTextStyle(newBgBase64);
-            setCurrentTextStyle(newTextStyle);
-            // The modified image becomes the new text-free master for this format.
-            // This implicitly resets the adaptations.
-            setMasterImageNoText(`data:image/png;base64,${newBgBase64}`);
-            
-            // Step 3: Add text to the new background.
-            let finalImageBase64 = newBgBase64;
-            const hasTextContent = !!(currentImageOptions.eventName.trim() || currentImageOptions.baseline.trim() || currentImageOptions.eventLocation.trim() || currentImageOptions.eventDate.trim());
-            const shouldHaveText = !currentImageOptions.hideText && hasTextContent;
-
-            if (shouldHaveText) {
-                setLoadingState({ progress: 85, message: 'Intégration de la typographie...' });
-                const { imageBase64: imageWithText } = await addTextToImage(
-                    newBgBase64, 'image/png', currentImageOptions, currentImageOptions.format, newTextStyle
-                );
-                finalImageBase64 = imageWithText;
-            }
-
-            // Step 4: Final quality checks and state update.
-            setLoadingState({ progress: 90, message: 'Finalisation et contrôle qualité...' });
-            const imageUrl = `data:image/png;base64,${finalImageBase64}`;
-            const expectedText = (shouldHaveText && currentImageOptions.textLock)
-                ? `${currentImageOptions.eventName} ${currentImageOptions.baseline} ${currentImageOptions.eventLocation} ${currentImageOptions.eventDate}`.replace(/\s+/g, ' ').trim()
-                : "";
-            
-            const [marginsVerified, textVerified] = await Promise.all([
-                verifyNoMargins(finalImageBase64),
-                verifyTextFidelity(finalImageBase64, expectedText),
-            ]);
-
-            const newQualityCheckResults: QualityCheckResults = {
-              resolution: currentImageOptions.highResolution, ratio: true, margins: marginsVerified, text: textVerified,
-            };
-
-            setGeneratedImage(imageUrl);
-            setGeneratedPrompt(newPrompt);
-            setCurrentImageOptions(currentImageOptions); // Options don't change, just the request
-            setQualityCheckResults(newQualityCheckResults);
-            setDerivedImages({} as Record<Format, DerivedImage>); // Reset adaptations
-            
-            addToHistory({ imageUrl, options: modificationOptions, prompt: newPrompt, qualityCheckResults: newQualityCheckResults, textStyle: newTextStyle });
-            setModificationRequest('');
-            showToast("✅ Modification appliquée !");
-            setView('result');
-
-        } catch (err: unknown) {
-            const errorMessage = err instanceof Error ? err.message : "Erreur lors de la modification de l'image.";
-            if (errorMessage === 'API_KEY_INVALID') {
-                showToast("❌ Clé API invalide ou non autorisée. Veuillez en sélectionner une nouvelle.");
-                setIsKeyReady(false);
-            } else {
-                showToast(`❌ Erreur: ${errorMessage}`);
-            }
-            setGeneratedImage(previousImage);
-            setView('result');
-        } finally {
-            setIsModifying(false);
-        }
-    }, 100);
-  };
-
-  const handleGenerateAdaptations = async (adaptationsToGenerate: { format: Format; textConfig: TextConfig }[]) => {
-    const baseImageForAdaptation = masterImageNoText || generatedImage;
-    if (!baseImageForAdaptation) {
-        showToast("❌ Aucun visuel principal à décliner.");
-        return;
-    }
-    if (!currentTextStyle) {
-        showToast("❌ Style de texte non défini. Veuillez régénérer le visuel principal.");
-        return;
-    }
-
-    setIsGeneratingAdaptations(true);
-    setError(null);
-
-    const initialDerived: Record<Format, DerivedImage> = { ...derivedImages };
-    adaptationsToGenerate.forEach(({ format, textConfig }) => {
-        initialDerived[format] = { format, imageUrl: null, isGenerating: true, textConfig };
-    });
-    setDerivedImages(initialDerived);
-
-    const masterImageBase64 = baseImageForAdaptation.split(',')[1];
-    const masterImageMimeType = baseImageForAdaptation.match(/:(.*?);/)?.[1] || 'image/png';
-
-    try {
-        const adaptationPromises = adaptationsToGenerate.map(async ({ format, textConfig }) => {
-            try {
-                // Step 1: Adapt the text-free base image.
-                const { imageBase64: adaptedImageBase64_noText } = await adaptEsportImage(
-                    masterImageBase64,
-                    masterImageMimeType,
-                    currentImageOptions,
-                    format
-                );
-
-                let finalAdaptedImageBase64 = adaptedImageBase64_noText;
-
-                // Step 2: Create format-specific options for text generation.
-                const formatSpecificOptions = { ...currentImageOptions };
-                if (!textConfig.eventName) formatSpecificOptions.eventName = '';
-                if (!textConfig.baseline) formatSpecificOptions.baseline = '';
-                if (!textConfig.eventLocation) formatSpecificOptions.eventLocation = '';
-                if (!textConfig.eventDate) formatSpecificOptions.eventDate = '';
-                
-                const shouldHaveTextForThisFormat = formatSpecificOptions.eventName || formatSpecificOptions.baseline || formatSpecificOptions.eventLocation || formatSpecificOptions.eventDate;
-
-                // Step 3: Add text to the adapted image if needed, using the CONSISTENT style.
-                if (shouldHaveTextForThisFormat) {
-                    const { imageBase64: imageWithText } = await addTextToImage(
-                        adaptedImageBase64_noText,
-                        'image/png',
-                        formatSpecificOptions,
-                        format,
-                        currentTextStyle // Pass the same style to all adaptations
-                    );
-                    finalAdaptedImageBase64 = imageWithText;
-                }
-
-                return { format, imageUrl: `data:image/png;base64,${finalAdaptedImageBase64}`, isGenerating: false, textConfig };
-            } catch (e) {
-                console.error(`Failed to adapt format ${format}`, e);
-                return { format, imageUrl: null, isGenerating: false, textConfig };
-            }
-        });
-
-        const results = await Promise.all(adaptationPromises);
-
-        setDerivedImages(prev => {
-            const newDerived = { ...prev };
-            results.forEach(result => {
-                newDerived[result.format] = result;
-            });
-            return newDerived;
-        });
-        showToast(`✅ ${results.filter(r => r.imageUrl).length} déclinaisons adaptées !`);
-    } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : "Erreur lors de l'adaptation des déclinaisons.";
-        if (errorMessage === 'API_KEY_INVALID') {
-            showToast("❌ Clé API invalide ou non autorisée. Veuillez en sélectionner une nouvelle.");
-            setIsKeyReady(false);
-        } else {
-            showToast(`❌ Erreur: ${errorMessage}`);
-        }
-    } finally {
-        setIsGeneratingAdaptations(false);
-    }
-};
   
-  const handleBackToControls = () => {
-      setView('welcome');
-      setGeneratedImage(null);
-      setGeneratedPrompt('');
-      setQualityCheckResults(null);
-      setIsModificationMode(false);
+  if (!isApiKeyReady) {
+    return <SelectApiKeyPanel onSelectKey={handleSelectKey} />;
   }
 
-  const handleRestoreFromHistory = (item: GenerationHistoryItem) => {
-    const optionsWithDefaults = {
-      ...initialOptions, // Start with defaults to ensure all keys are present
-      ...item.options,
-      elementSize: item.options.elementSize ?? 75,
-    };
+  return (
+    <div className="flex h-full bg-gray-900">
+      <div className={`transition-all duration-300 ease-in-out ${isPanelOpen ? 'w-full md:w-[400px] lg:w-[450px]' : 'w-0'} flex-shrink-0 relative h-full`}>
+        {isPanelOpen && <ControlsPanel 
+          options={options}
+          setOptions={setOptions}
+          onGenerate={() => setIsConfirmationModalOpen(true)}
+          isLoading={isLoading}
+          error={error}
+          setError={setError}
+          history={history}
+          onRestoreFromHistory={handleRestoreFromHistory}
+          onDeleteHistoryItem={handleDeleteHistoryItem}
+          onUniverseToggle={handleUniverseToggle}
+          onOpenPromptEditor={handleOpenPromptEditor}
+          allPresets={allPresets}
+          onAddPreset={handleAddPreset}
+          onUpdatePreset={handleUpdatePreset}
+          onDeletePreset={handleDeletePreset}
+          onSuggestPreset={handleSuggestPreset}
+          isSuggestingPreset={isSuggestingPreset}
+          onClosePanel={() => setIsPanelOpen(false)}
+          savedSubjects={savedSubjects}
+          onAddSavedSubject={handleAddSavedSubject}
+          onDeleteSavedSubject={handleDeleteSavedSubject}
+          onSubjectToggle={handleSubjectToggle}
+        />}
+      </div>
 
-    setOptions(optionsWithDefaults);
-    setGeneratedImage(item.imageUrl);
-    setGeneratedPrompt(item.prompt);
-    setCurrentImageOptions(optionsWithDefaults);
-    setCurrentTextStyle(item.textStyle || null);
-    setMasterImageNoText(item.masterImageNoText || null);
-    setDerivedImages({} as Record<Format, DerivedImage>);
-    
-    if (item.qualityCheckResults) {
-      setQualityCheckResults(item.qualityCheckResults);
-    } else {
-      // Fallback for old history items from localStorage
-      setQualityCheckResults({
-        resolution: optionsWithDefaults.highResolution,
-        ratio: true,
-        margins: true, // Cannot verify old images, default to true
-        text: true, // Assume text was okay
-      });
-    }
+      <div className="flex-1 flex flex-col relative">
+        {!isPanelOpen && (
+          <button
+            onClick={() => setIsPanelOpen(true)}
+            className="absolute top-1/2 -translate-y-1/2 left-0 z-20 bg-purple-600 hover:bg-purple-700 text-white p-2 rounded-r-lg shadow-lg focus:outline-none focus:ring-2 focus:ring-purple-400"
+            aria-label="Ouvrir le panneau de création"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="http://www.w3.org/2000/svg" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
+        )}
 
-    setView('result');
-    setIsModificationMode(false);
-    setIsPanelOpen(false);
-    showToast("📜 Version restaurée depuis l'historique.");
-  }
-
-  const renderContentPanel = () => {
-    switch (view) {
-      case 'loading':
-        return <LoadingPanel progress={loadingState.progress} message={loadingState.message} />;
-      case 'result':
-        return generatedImage ? (
+        <main className="flex-1 overflow-y-auto h-full">
+          {view === 'welcome' && <WelcomePanel onOpenPricingModal={() => setIsPricingModalOpen(true)} />}
+          {view === 'loading' && <LoadingPanel progress={loadingState.progress} message={loadingState.message} />}
+          {view === 'result' && generatedImage && (
             <ImageResultPanel
               imageSrc={generatedImage}
               options={currentImageOptions}
               qualityCheckResults={qualityCheckResults}
               prompt={generatedPrompt}
-              onRegenerate={handleGenerateVariation}
-              onBack={handleBackToControls}
-              onTargetedRegeneration={handleTargetedRegeneration}
+              onRegenerate={() => setIsConfirmationModalOpen(true)}
+              onBack={() => { setView('welcome'); setIsPanelOpen(true); }}
+              onTargetedRegeneration={handleStartModification}
               isModificationMode={isModificationMode}
               setIsModificationMode={setIsModificationMode}
               modificationRequest={modificationRequest}
               setModificationRequest={setModificationRequest}
               isModifying={isModifying}
               onDecline={() => setIsFormatManagerOpen(true)}
+              allPresets={allPresets}
             />
-          ) : <WelcomePanel onOpenPricingModal={() => setIsPricingModalOpen(true)} />;
-      case 'welcome':
-      default:
-        return <WelcomePanel onOpenPricingModal={() => setIsPricingModalOpen(true)} />;
-    }
-  };
-
-  if (isAiStudioEnv === null) {
-    return <LoadingPanel progress={50} message="Vérification de l'environnement..." />;
-  }
-
-  if (!isKeyReady) {
-    if (isAiStudioEnv) {
-        return <SelectApiKeyPanel onSelectKey={handleKeySelection} />;
-    } else {
-        return <ApiKeyErrorPanel />;
-    }
-  }
-
-  return (
-    <div className="relative h-screen bg-gray-900 text-white font-inter overflow-hidden">
-      {!isPanelOpen && (
-        <button
-          onClick={() => setIsPanelOpen(true)}
-          className="absolute top-1/2 -translate-y-1/2 left-0 z-30 bg-purple-600 hover:bg-purple-700 text-white p-2 rounded-r-lg shadow-lg focus:outline-none focus:ring-2 focus:ring-purple-400 rounded-l-none"
-          aria-label="Ouvrir le panneau de création"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 rotate-180" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
-          </svg>
-        </button>
-      )}
-
-      <main className="flex h-full">
-        <aside className={`absolute top-0 left-0 z-20 w-full max-w-md bg-gray-800 h-full transition-transform duration-300 ease-in-out transform ${isPanelOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-          <ControlsPanel
-            options={options}
-            setOptions={setOptions}
-            onGenerate={handleGenerate}
-            isLoading={isLoading}
-            error={error}
-            setError={setError}
-            history={history}
-            onRestoreFromHistory={handleRestoreFromHistory}
-            onDeleteHistoryItem={handleDeleteHistoryItem}
-            onUniverseToggle={handleUniverseToggle}
-            onOpenPromptEditor={handleOpenPromptEditor}
-            allPresets={allPresets}
-            onAddPreset={handleAddPreset}
-            onUpdatePreset={handleUpdatePreset}
-            onDeletePreset={handleDeletePreset}
-            onSuggestPreset={handleSuggestPreset}
-            isSuggestingPreset={isSuggestingPreset}
-            onClosePanel={() => setIsPanelOpen(false)}
-          />
-        </aside>
-
-        <div className="flex-1 relative overflow-y-auto">
-          {renderContentPanel()}
-        </div>
-      </main>
-
+          )}
+        </main>
+      </div>
+      
       <Toast message={toastMessage} />
-      
-      {isFormatManagerOpen && (
-        <FormatManager
-          isOpen={isFormatManagerOpen}
-          onClose={() => setIsFormatManagerOpen(false)}
-          mainImageSrc={generatedImage!}
-          mainImageOptions={currentImageOptions}
-          onGenerate={handleGenerateAdaptations}
-          isGenerating={isGeneratingAdaptations}
-          derivedImages={derivedImages}
-        />
-      )}
 
-      {isPromptEditorOpen && (
-        <PromptEditorModal
-          isOpen={isPromptEditorOpen}
-          onClose={() => setIsPromptEditorOpen(false)}
-          history={promptHistory}
-          onSendMessage={handleRefinePrompt}
-          isAssistantResponding={isAssistantResponding}
-          onFinalize={handleFinalizePrompt}
-        />
-      )}
+      <FormatManager
+        isOpen={isFormatManagerOpen}
+        onClose={() => setIsFormatManagerOpen(false)}
+        mainImageSrc={generatedImage || ''}
+        mainImageOptions={currentImageOptions}
+        onGenerate={handleGenerateAdaptations}
+        isGenerating={isGeneratingAdaptations}
+        derivedImages={derivedImages}
+        allPresets={allPresets}
+      />
+
+      <PromptEditorModal
+        isOpen={isPromptEditorOpen}
+        onClose={() => setIsPromptEditorOpen(false)}
+        history={promptHistory}
+        onSendMessage={handleRefinePrompt}
+        isAssistantResponding={isAssistantResponding}
+        onFinalize={handleFinalizePrompt}
+      />
+
+      <PricingModal
+        isOpen={isPricingModalOpen}
+        onClose={() => setIsPricingModalOpen(false)}
+      />
       
-      {isPricingModalOpen && (
-        <PricingModal isOpen={isPricingModalOpen} onClose={() => setIsPricingModalOpen(false)} />
-      )}
+      <ConfirmationModal
+        isOpen={isConfirmationModalOpen}
+        onClose={() => setIsConfirmationModalOpen(false)}
+        onConfirm={startGeneration}
+        options={options}
+        allPresets={allPresets}
+        isLoading={isGenerating}
+      />
+      
+      <ModificationConfirmationModal
+        isOpen={isModificationConfirmationOpen}
+        onClose={() => setIsModificationConfirmationOpen(false)}
+        onConfirm={executeModification}
+        summary={promptChangeSummary}
+        isLoading={isPreparingModification || isModifying}
+      />
     </div>
   );
 };
-
 export default App;

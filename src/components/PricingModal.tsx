@@ -1,4 +1,5 @@
 
+
 import React from 'react';
 
 interface PricingModalProps {
@@ -7,10 +8,10 @@ interface PricingModalProps {
 }
 
 const packs = [
-  { icon: '🎯', name: 'Découverte', price: '4,90 €', credits: '100', approx: '~20 visuels' },
-  { icon: '⚡', name: 'Créateur', price: '9,90 €', credits: '200', approx: '~40 visuels' },
-  { icon: '🚀', name: 'Pro Gamer', price: '24,90 €', credits: '500', approx: '~100 visuels' },
-  { icon: '🏫', name: 'Association', price: '44,90 €', credits: '1 000', approx: '~200 visuels' },
+  { name: 'Découverte', price: '4,90 €', credits: '100', approx: '~20 visuels' },
+  { name: 'Créateur', price: '9,90 €', credits: '200', approx: '~40 visuels' },
+  { name: 'Pro Gamer', price: '24,90 €', credits: '500', approx: '~100 visuels' },
+  { name: 'Association', price: '44,90 €', credits: '1 000', approx: '~200 visuels' },
 ];
 
 const PricingModal: React.FC<PricingModalProps> = ({ isOpen, onClose }) => {
@@ -29,14 +30,14 @@ const PricingModal: React.FC<PricingModalProps> = ({ isOpen, onClose }) => {
       >
         <header className="flex-shrink-0 p-6 flex justify-between items-start border-b border-gray-700">
           <div>
-            <h2 className="text-2xl font-bold font-orbitron text-purple-300">💎 Tarification</h2>
+            <h2 className="text-2xl font-bold font-orbitron text-purple-300">Tarification</h2>
             <p className="text-gray-400">Simple. Flexible. Sans abonnement.</p>
           </div>
           <div className="flex items-center gap-4">
              <a 
                   href="#" 
                   onClick={(e) => e.preventDefault()} 
-                  className="font-semibold text-gray-300 hover:text-white transition-colors cursor-pointer hover:underline text-sm"
+                  className="font-bold text-gray-300 hover:text-white transition-colors cursor-pointer hover:underline text-sm"
                   aria-label="Se connecter (fonctionnalité à venir)"
               >
                   Se connecter
@@ -44,7 +45,7 @@ const PricingModal: React.FC<PricingModalProps> = ({ isOpen, onClose }) => {
               <a
                   href="#"
                   onClick={(e) => e.preventDefault()}
-                  className="font-semibold bg-purple-600 hover:bg-purple-700 text-white py-2 px-3 rounded-lg transition-colors cursor-pointer text-sm"
+                  className="font-bold bg-purple-600 hover:bg-purple-700 text-white py-2 px-3 rounded-lg transition-colors cursor-pointer text-sm"
                   aria-label="S'inscrire (fonctionnalité à venir)"
               >
                   S'inscrire
@@ -59,7 +60,7 @@ const PricingModal: React.FC<PricingModalProps> = ({ isOpen, onClose }) => {
           </p>
 
           <section>
-            <h3 className="text-lg font-semibold text-white font-orbitron mb-3">⚙️ Comment ça marche</h3>
+            <h3 className="text-lg font-semibold text-white font-orbitron mb-3">Comment ça marche</h3>
             <div className="bg-gray-900/50 p-4 rounded-lg border border-gray-700">
               <ul className="space-y-2 text-gray-300">
                 <li className="flex justify-between items-center"><span>Génération standard</span> <span className="font-bold text-purple-400">5 crédits</span></li>
@@ -72,7 +73,7 @@ const PricingModal: React.FC<PricingModalProps> = ({ isOpen, onClose }) => {
           </section>
 
           <section>
-            <h3 className="text-lg font-semibold text-white font-orbitron mb-3">💰 Packs de crédits</h3>
+            <h3 className="text-lg font-semibold text-white font-orbitron mb-3">Packs de crédits</h3>
             <div className="overflow-x-auto">
               <table className="w-full text-left bg-gray-900/50 rounded-lg border border-gray-700">
                 <thead className="bg-gray-700/50">
@@ -86,7 +87,7 @@ const PricingModal: React.FC<PricingModalProps> = ({ isOpen, onClose }) => {
                 <tbody>
                   {packs.map((pack) => (
                     <tr key={pack.name} className="border-t border-gray-700">
-                      <td className="p-3 font-semibold">{pack.icon} {pack.name}</td>
+                      <td className="p-3 font-semibold">{pack.name}</td>
                       <td className="p-3 text-center font-bold text-purple-300">{pack.price}</td>
                       <td className="p-3 text-center">{pack.credits} crédits</td>
                       <td className="p-3 text-right text-gray-400">{pack.approx}</td>
@@ -98,11 +99,11 @@ const PricingModal: React.FC<PricingModalProps> = ({ isOpen, onClose }) => {
           </section>
           
           <section>
-            <h3 className="text-lg font-semibold text-white font-orbitron mb-3">💜 Avantages</h3>
+            <h3 className="text-lg font-semibold text-white font-orbitron mb-3">Avantages</h3>
              <ul className="text-gray-300 list-inside space-y-1">
-                <li>✅ 15 crédits offerts à l’inscription</li>
-                <li>✅ Aucun abonnement automatique</li>
-                <li>✅ Crédits bonus lors d’événements partenaires</li>
+                <li>15 crédits offerts à l’inscription</li>
+                <li>Aucun abonnement automatique</li>
+                <li>Crédits bonus lors d’événements partenaires</li>
             </ul>
           </section>
 

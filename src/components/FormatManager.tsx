@@ -1,5 +1,7 @@
+
+
 import React, { useState, useEffect, useRef } from 'react';
-import type { EsportPromptOptions, Format, DerivedImage, TextBlock, TextConfig } from '../types';
+import type { EsportPromptOptions, Format, DerivedImage, TextBlock, TextConfig, AdaptationRequest, CropArea, UniversePreset } from '../types';
 import { DECLINATION_FORMATS } from '../constants/formats';
 import SpinnerIcon from './icons/SpinnerIcon';
 import DownloadIcon from './icons/DownloadIcon';
@@ -87,9 +89,10 @@ interface FormatManagerProps {
   onClose: () => void;
   mainImageSrc: string;
   mainImageOptions: EsportPromptOptions;
-  onGenerate: (adaptations: { format: Format, textConfig: TextConfig }[]) => void;
+  onGenerate: (adaptations: AdaptationRequest[]) => void;
   isGenerating: boolean;
   derivedImages: Record<Format, DerivedImage>;
+  allPresets: UniversePreset[];
 }
 
 declare const JSZip: any;
@@ -102,10 +105,23 @@ const FormatManager: React.FC<FormatManagerProps> = ({
   onGenerate,
   isGenerating,
   derivedImages,
+  allPresets,
 }) => {
   const [selectedFormats, setSelectedFormats] = useState<Set<Format>>(new Set());
   const [isZipping, setIsZipping] = useState(false);
   const [textConfigs, setTextConfigs] = useState<Record<Format, TextConfig>>({} as Record<Format, TextConfig>);
+  
+  const [bannerCrop, setBannerCrop] = useState<CropArea>({ y: 1/3 }); 
+  const [forceBannerRecrop, setForceBannerRecrop] = useState(false);
+
+  const [landscapeCrop, setLandscapeCrop] = useState<CropArea>({ y: (1 - 9 / 16) / 2 });
+  const [forceLandscapeRecrop, setForceLandscapeRecrop] = useState(false);
+
+  const imageContainerRef = useRef<HTMLDivElement>(null);
+  const isDraggingRef = useRef(false);
+  const dragStartYRef = useRef(0);
+  const initialCropYRef = useRef(0);
+  
 
   useEffect(() => {
     if (isOpen) {
@@ -142,11 +158,23 @@ const FormatManager: React.FC<FormatManagerProps> = ({
   };
 
   const handleGenerateClick = () => {
-    const adaptationsToGenerate = Array.from(selectedFormats).map(format => ({
+    const adaptationsToGenerate = Array.from(selectedFormats).map((format: Format) => {
+      const adaptation: AdaptationRequest = {
         format,
         textConfig: textConfigs[format],
-    }));
+      };
+      if (format === '3:1 (Bannière)') {
+        adaptation.cropArea = bannerCrop;
+      }
+      if (format === '16:9 (Paysage)') {
+        adaptation.cropArea = landscapeCrop;
+      }
+      return adaptation;
+    });
     onGenerate(adaptationsToGenerate);
+    setSelectedFormats(new Set());
+    setForceBannerRecrop(false);
+    setForceLandscapeRecrop(false);
   };
   
   const handleDownload = async (format: Format, imageUrl: string) => {
@@ -157,16 +185,31 @@ const FormatManager: React.FC<FormatManagerProps> = ({
         }
 
         const [width, height] = formatDef.dimensions.replace('px', '').split('x').map(Number);
-        const resizedImageUrl = await resizeAndCropImage(imageUrl, width, height);
+        const resizedImageUrl = await resizeAndCropImage(`data:image/png;base64,${imageUrl}`, width, height);
 
         const link = document.createElement('a');
         link.href = resizedImageUrl;
 
-        const slugify = (text: string) => text.toLowerCase().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-').slice(0, 50);
-        const eventNameSlug = slugify(mainImageOptions.eventName || 'affiche-esport');
-        const formatSlug = slugify(formatDef.label);
+        const slugify = (text: string) => text.toLowerCase().replace(/\s+/g, '-').slice(0, 50);
         
-        link.download = `Affiche_${eventNameSlug}_${formatSlug}.png`;
+        const selectedUniverses = allPresets
+            .filter(p => mainImageOptions.universes.includes(p.id))
+            .map(p => p.label)
+            .join(' ');
+        
+        const universeSlug = selectedUniverses ? slugify(selectedUniverses) : 'univers-personnalise';
+        const formatSlug = slugify(formatDef.label);
+        const dimensions = formatDef.dimensions;
+        
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = (now.getMonth() + 1).toString().padStart(2, '0');
+        const day = now.getDate().toString().padStart(2, '0');
+        const hours = now.getHours().toString().padStart(2, '0');
+        const minutes = now.getMinutes().toString().padStart(2, '0');
+        const timestamp = `${year}-${month}-${day}_${hours}${minutes}`;
+        
+        link.download = `${universeSlug}_${formatSlug}_${dimensions}_${timestamp}.png`;
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
@@ -193,8 +236,22 @@ const FormatManager: React.FC<FormatManagerProps> = ({
             };
         }).filter((item): item is { format: Format; imageUrl: string } => !!item.imageUrl);
 
-        const slugify = (text: string) => text.toLowerCase().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-').slice(0, 50);
-        const eventNameSlug = slugify(mainImageOptions.eventName || 'affiche-esport');
+        const slugify = (text: string) => text.toLowerCase().replace(/\s+/g, '-').slice(0, 50);
+        
+        const selectedUniverses = allPresets
+            .filter(p => mainImageOptions.universes.includes(p.id))
+            .map(p => p.label)
+            .join(' ');
+        
+        const universeSlug = selectedUniverses ? slugify(selectedUniverses) : 'univers-personnalise';
+
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = (now.getMonth() + 1).toString().padStart(2, '0');
+        const day = now.getDate().toString().padStart(2, '0');
+        const hours = now.getHours().toString().padStart(2, '0');
+        const minutes = now.getMinutes().toString().padStart(2, '0');
+        const timestamp = `${year}-${month}-${day}_${hours}${minutes}`;
 
         for (const item of downloadableImages) {
             const formatDef = DECLINATION_FORMATS.find(f => f.id === item.format);
@@ -204,19 +261,20 @@ const FormatManager: React.FC<FormatManagerProps> = ({
             }
 
             const [width, height] = formatDef.dimensions.replace('px', '').split('x').map(Number);
-            const resizedImageUrl = await resizeAndCropImage(item.imageUrl, width, height);
+            const resizedImageUrl = await resizeAndCropImage(`data:image/png;base64,${item.imageUrl}`, width, height);
             
             const response = await fetch(resizedImageUrl);
             const blob = await response.blob();
             const formatSlug = slugify(formatDef.label);
-            zip.file(`Affiche_${eventNameSlug}_${formatSlug}.png`, blob);
+            const dimensions = formatDef.dimensions;
+            zip.file(`${universeSlug}_${formatSlug}_${dimensions}_${timestamp}.png`, blob);
         }
 
         const content = await zip.generateAsync({ type: 'blob' });
         
         const link = document.createElement('a');
         link.href = URL.createObjectURL(content);
-        link.download = `Pack_Affiches_${eventNameSlug}.zip`;
+        link.download = `Pack_Visuels_${universeSlug}_${timestamp}.zip`;
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
@@ -230,9 +288,103 @@ const FormatManager: React.FC<FormatManagerProps> = ({
     }
   };
 
+  // BANNER Drag Logic
+  const updateBannerCropPosition = (clientY: number) => {
+    if (!isDraggingRef.current || !imageContainerRef.current) return;
+    const containerHeight = imageContainerRef.current.offsetHeight;
+    if (containerHeight === 0) return;
+    const deltaY = clientY - dragStartYRef.current;
+    const deltaYPercent = deltaY / containerHeight;
+    const bannerHeightPercent = 1 / 3;
+    const max_y = 1 - bannerHeightPercent;
+    const newY = Math.max(0, Math.min(max_y, initialCropYRef.current + deltaYPercent));
+    setBannerCrop({ y: newY });
+  };
+  const handleBannerDragMove = (e: MouseEvent) => updateBannerCropPosition(e.clientY);
+  const handleBannerDragEnd = () => {
+    isDraggingRef.current = false;
+    window.removeEventListener('mousemove', handleBannerDragMove);
+    window.removeEventListener('mouseup', handleBannerDragEnd);
+  };
+  const handleBannerDragStart = (e: React.MouseEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    isDraggingRef.current = true;
+    dragStartYRef.current = e.clientY;
+    initialCropYRef.current = bannerCrop.y;
+    window.addEventListener('mousemove', handleBannerDragMove);
+    window.addEventListener('mouseup', handleBannerDragEnd);
+  };
+  const handleBannerTouchMove = (e: TouchEvent) => {
+    if (e.touches.length !== 1) return;
+    e.preventDefault();
+    updateBannerCropPosition(e.touches[0].clientY);
+  };
+  const handleBannerTouchEnd = () => {
+    isDraggingRef.current = false;
+    window.removeEventListener('touchmove', handleBannerTouchMove);
+    window.removeEventListener('touchend', handleBannerTouchEnd);
+    window.removeEventListener('touchcancel', handleBannerTouchEnd);
+  };
+  const handleBannerTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (e.touches.length !== 1) return;
+    isDraggingRef.current = true;
+    dragStartYRef.current = e.touches[0].clientY;
+    initialCropYRef.current = bannerCrop.y;
+    window.addEventListener('touchmove', handleBannerTouchMove, { passive: false });
+    window.addEventListener('touchend', handleBannerTouchEnd);
+    window.addEventListener('touchcancel', handleBannerTouchEnd);
+  };
+
+  // LANDSCAPE Drag Logic
+  const updateLandscapeCropPosition = (clientY: number) => {
+    if (!isDraggingRef.current || !imageContainerRef.current) return;
+    const containerHeight = imageContainerRef.current.offsetHeight;
+    if (containerHeight === 0) return;
+    const deltaY = clientY - dragStartYRef.current;
+    const deltaYPercent = deltaY / containerHeight;
+    const landscapeHeightPercent = 9 / 16;
+    const max_y = 1 - landscapeHeightPercent;
+    const newY = Math.max(0, Math.min(max_y, initialCropYRef.current + deltaYPercent));
+    setLandscapeCrop({ y: newY });
+  };
+  const handleLandscapeDragMove = (e: MouseEvent) => updateLandscapeCropPosition(e.clientY);
+  const handleLandscapeDragEnd = () => {
+    isDraggingRef.current = false;
+    window.removeEventListener('mousemove', handleLandscapeDragMove);
+    window.removeEventListener('mouseup', handleLandscapeDragEnd);
+  };
+  const handleLandscapeDragStart = (e: React.MouseEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    isDraggingRef.current = true;
+    dragStartYRef.current = e.clientY;
+    initialCropYRef.current = landscapeCrop.y;
+    window.addEventListener('mousemove', handleLandscapeDragMove);
+    window.addEventListener('mouseup', handleLandscapeDragEnd);
+  };
+  const handleLandscapeTouchMove = (e: TouchEvent) => {
+    if (e.touches.length !== 1) return;
+    e.preventDefault();
+    updateLandscapeCropPosition(e.touches[0].clientY);
+  };
+  const handleLandscapeTouchEnd = () => {
+    isDraggingRef.current = false;
+    window.removeEventListener('touchmove', handleLandscapeTouchMove);
+    window.removeEventListener('touchend', handleLandscapeTouchEnd);
+    window.removeEventListener('touchcancel', handleLandscapeTouchEnd);
+  };
+  const handleLandscapeTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (e.touches.length !== 1) return;
+    isDraggingRef.current = true;
+    dragStartYRef.current = e.touches[0].clientY;
+    initialCropYRef.current = landscapeCrop.y;
+    window.addEventListener('touchmove', handleLandscapeTouchMove, { passive: false });
+    window.addEventListener('touchend', handleLandscapeTouchEnd);
+    window.addEventListener('touchcancel', handleLandscapeTouchEnd);
+  };
+
+
   if (!isOpen) return null;
 
-  // FIX: Explicitly typed the parameter 'd' in the '.some()' callback to 'DerivedImage' to resolve a TypeScript error where 'd' was being inferred as 'unknown'. This ensures that properties like 'imageUrl' can be safely accessed.
   const hasGeneratedDeclinations = Object.values(derivedImages).some((d: DerivedImage) => d.imageUrl) || DECLINATION_FORMATS.some(f => f.id === mainImageOptions.format);
 
   return (
@@ -260,20 +412,86 @@ const FormatManager: React.FC<FormatManagerProps> = ({
               const isSelected = selectedFormats.has(formatDef.id);
               const derived = derivedImages[formatDef.id];
               const isMainFormat = mainImageOptions.format === formatDef.id;
-              const imageUrl = isMainFormat ? mainImageSrc : derived?.imageUrl;
+              const downloadableImageUrl = isMainFormat ? mainImageSrc : derived?.imageUrl;
+
+              const isBannerCard = formatDef.id === '3:1 (Bannière)';
+              const canCropBanner = mainImageOptions.format === '1:1 (Carré)';
+              const isBannerGenerated = derived?.imageUrl && !derived.isGenerating;
+              const showCropper = isBannerCard && canCropBanner && (!isBannerGenerated || forceBannerRecrop);
+
+              const isLandscapeCard = formatDef.id === '16:9 (Paysage)';
+              const canCropLandscape = mainImageOptions.format === '1:1 (Carré)';
+              const isLandscapeGenerated = derived?.imageUrl && !derived.isGenerating;
+              const showLandscapeCropper = isLandscapeCard && canCropLandscape && (!isLandscapeGenerated || forceLandscapeRecrop);
+
+              let previewImageUrl = downloadableImageUrl;
+              let previewAspectRatio = formatDef.ratio;
+              if (showCropper || showLandscapeCropper) {
+                  previewImageUrl = mainImageSrc;
+                  previewAspectRatio = 1;
+              }
+
               const isCurrentlyGenerating = derived?.isGenerating;
+              const isInteractive = isSelected || showCropper || showLandscapeCropper;
               
               return (
-                <div key={formatDef.id} className={`bg-gray-900/50 rounded-lg border-2 transition-all ${isSelected && !isMainFormat ? 'border-purple-500' : 'border-gray-700'}`}>
+                <div key={formatDef.id} className={`bg-gray-900/50 rounded-lg border-2 transition-all ${isInteractive && !isMainFormat ? 'border-purple-500' : 'border-gray-700'}`}>
                     <div 
+                        ref={(showCropper || showLandscapeCropper) ? imageContainerRef : null}
                         className="relative w-full bg-black/20 flex items-center justify-center overflow-hidden rounded-t-md"
-                        style={{ aspectRatio: `${formatDef.ratio}` }}
+                        style={{ aspectRatio: `${previewAspectRatio}` }}
                     >
-                        {imageUrl ? (
-                            <img src={imageUrl} alt={`Aperçu ${formatDef.label}`} className="w-full h-full object-cover" />
+                        {previewImageUrl ? (
+                            <img src={`data:image/png;base64,${previewImageUrl}`} alt={`Aperçu ${formatDef.label}`} className="w-full h-full object-cover" />
                         ) : (
                             <div className="text-gray-600 text-sm">{formatDef.label}</div>
                         )}
+                        
+                        {showCropper && previewImageUrl && (
+                            <>
+                                <div className="absolute inset-0 bg-black/30 pointer-events-none" />
+                                <div 
+                                    className="absolute w-full border-2 border-dashed border-purple-400 bg-white/10 cursor-ns-resize group"
+                                    style={{ 
+                                      height: '33.333%', 
+                                      top: `${bannerCrop.y * 100}%`,
+                                      left: 0
+                                    }}
+                                    onMouseDown={handleBannerDragStart}
+                                    onTouchStart={handleBannerTouchStart}
+                                >
+                                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                                        <span className="bg-black/50 text-white text-xs font-bold px-2 py-1 rounded">
+                                            Zone Bannière (3:1)
+                                        </span>
+                                    </div>
+                                </div>
+                            </>
+                        )}
+
+                        {showLandscapeCropper && previewImageUrl && (
+                            <>
+                                <div className="absolute inset-0 bg-black/30 pointer-events-none" />
+                                <div
+                                    className="absolute w-full border-2 border-dashed border-purple-400 bg-white/10 cursor-ns-resize group"
+                                    style={{
+                                        height: `${(9 / 16) * 100}%`,
+                                        top: `${landscapeCrop.y * 100}%`,
+                                        left: 0,
+                                    }}
+                                    onMouseDown={handleLandscapeDragStart}
+                                    onTouchStart={handleLandscapeTouchStart}
+                                >
+                                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                                        <span className="bg-black/50 text-white text-xs font-bold px-2 py-1 rounded">
+                                            Zone Paysage (16:9)
+                                        </span>
+                                    </div>
+                                </div>
+                            </>
+                        )}
+
+
                         {isCurrentlyGenerating && (
                             <div className="absolute inset-0 bg-black/70 flex flex-col items-center justify-center">
                                 <SpinnerIcon className="w-8 h-8 text-purple-400" />
@@ -298,6 +516,13 @@ const FormatManager: React.FC<FormatManagerProps> = ({
                                 />
                              )}
                         </div>
+                        {(isBannerCard || isLandscapeCard) && !(canCropBanner || canCropLandscape) && !downloadableImageUrl && !isCurrentlyGenerating && (
+                            <div className="mt-3 p-2 bg-yellow-900/50 border border-yellow-700 rounded-md text-center">
+                                <p className="text-xs text-yellow-300">
+                                Pour un recadrage personnalisé, générez d'abord votre visuel principal au format <strong>Carré (1:1)</strong>.
+                                </p>
+                            </div>
+                        )}
                         <TextSelector
                             config={textConfigs[formatDef.id]}
                             onChange={(newConfig) => {
@@ -306,13 +531,25 @@ const FormatManager: React.FC<FormatManagerProps> = ({
                             options={mainImageOptions}
                             disabled={isGenerating || isZipping || isMainFormat}
                         />
-                        {imageUrl && (
+                        {downloadableImageUrl && (
                              <button
-                                onClick={() => handleDownload(formatDef.id, imageUrl)}
+                                onClick={() => handleDownload(formatDef.id, downloadableImageUrl)}
                                 className="w-full mt-3 flex items-center justify-center gap-2 bg-blue-600/80 hover:bg-blue-600 text-white text-sm font-semibold py-2 px-3 rounded-lg transition"
                              >
                                 <DownloadIcon className="w-4 h-4" />
                                 Télécharger
+                            </button>
+                        )}
+                        {downloadableImageUrl && (isBannerCard && canCropBanner || isLandscapeCard && canCropLandscape) && !isCurrentlyGenerating && (
+                            <button
+                                onClick={() => {
+                                    if (isBannerCard) setForceBannerRecrop(true);
+                                    if (isLandscapeCard) setForceLandscapeRecrop(true);
+                                    setSelectedFormats(prev => new Set(prev).add(formatDef.id));
+                                }}
+                                className="w-full text-center text-xs text-purple-400 hover:text-purple-300 underline mt-2"
+                            >
+                                Modifier le cadrage
                             </button>
                         )}
                     </div>
@@ -329,7 +566,7 @@ const FormatManager: React.FC<FormatManagerProps> = ({
                 disabled={isZipping || isGenerating}
                 className="w-full sm:w-auto flex items-center justify-center gap-2 bg-gray-600 hover:bg-gray-700 disabled:bg-gray-500 text-white font-semibold py-3 px-4 rounded-lg transition"
             >
-                {isZipping ? <><SpinnerIcon className="w-5 h-5 mr-2" /> Création du ZIP...</> : '📦 Télécharger tout (ZIP)'}
+                {isZipping ? <><SpinnerIcon className="w-5 h-5 mr-2" /> Création du ZIP...</> : 'Télécharger tout (ZIP)'}
             </button>
           )}
           <button
@@ -342,7 +579,7 @@ const FormatManager: React.FC<FormatManagerProps> = ({
                 <SpinnerIcon className="w-5 h-5 mr-3" />
                 Génération des déclinaisons...
               </>
-            ) : `🖼️ Générer ${selectedFormats.size} déclinaison(s)`}
+            ) : `Générer ${selectedFormats.size} déclinaison(s)`}
           </button>
         </footer>
       </div>

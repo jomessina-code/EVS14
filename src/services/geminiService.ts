@@ -1,18 +1,18 @@
 
 
 import { GoogleGenAI, Modality, Type } from "@google/genai";
-import type { EsportPromptOptions, UniverseId, Format, UniversePreset, GameType, GraphicStyle, Ambiance, VisualElements, TextStyle } from "../types";
+import type { EsportPromptOptions, UniverseId, Format, UniversePreset, GameType, GraphicStyle, Ambiance, VisualElements, TextStyle, PromptChangeSummary, CropArea } from "../types";
 import { GAME_TYPES, GRAPHIC_STYLES, AMBIANCES, VISUAL_ELEMENTS } from "../constants/options";
 
-// Helper to get API key
-const getApiKey = () => {
+// Helper to get a new AI client instance with the current API key.
+// This ensures that if the key changes, new requests use the updated key.
+const getAiClient = () => {
     const apiKey = process.env.API_KEY;
     if (!apiKey) {
-        // This error should ideally not be hit if the new key selection flow works,
-        // but it's kept as a safeguard.
+        // Throw a specific error that the UI can catch to trigger the key selection panel.
         throw new Error("API_KEY_INVALID");
     }
-    return apiKey;
+    return new GoogleGenAI({ apiKey });
 };
 
 const handleApiError = (error: unknown, functionName: string): never => {
@@ -52,97 +52,109 @@ const generateTextOverlayPrompt = (options: EsportPromptOptions, format: Format,
     };
 
     const textBlocks = [];
-    if (options.eventName) textBlocks.push(`- Event Name (Main Title): "${options.eventName}"`);
-    if (options.baseline) textBlocks.push(`- Baseline (Subtitle): "${options.baseline}"`);
-    if (options.eventLocation) textBlocks.push(`- Location: "${options.eventLocation}"`);
-    if (options.eventDate) textBlocks.push(`- Date: "${options.eventDate}"`);
+    if (options.eventName) textBlocks.push(`- Nom de l'événement (Titre principal) : "${options.eventName}"`);
+    if (options.baseline) textBlocks.push(`- Slogan (Sous-titre) : "${options.baseline}"`);
+    if (options.eventLocation) textBlocks.push(`- Lieu : "${options.eventLocation}"`);
+    if (options.eventDate) textBlocks.push(`- Date : "${options.eventDate}"`);
 
     const textContent = textBlocks.join('\n');
 
     if (!textContent.trim()) {
-        return "You are an AI. The user has requested to add text, but no text was provided. Return the original image unchanged.";
+        return "Tu es une IA. L'utilisateur a demandé d'ajouter du texte, mais aucun texte n'a été fourni. Retourne l'image originale sans modification.";
     }
     
     let styleInstructions = "";
     if (textStyle) {
         styleInstructions = `
-**2.1. ENFORCED STYLE:**
-    - You MUST use this exact style. Do NOT deviate.
-    - **Font Family:** "${textStyle.fontFamily}"
-    - **Primary Color:** "${textStyle.color}"
-    - **Readability Effect:** "${textStyle.effect}"
-    - This style MUST be applied identically and consistently across ALL text blocks.
+**2.1. STYLE IMPOSÉ :**
+- Tu DOIS utiliser ce style exact. Ne t'en écarte PAS.
+- **Famille de police :** "${textStyle.fontFamily}"
+- **Couleur principale :** "${textStyle.color}"
+- **Effet de lisibilité :** "${textStyle.effect}"
+- Ce style DOIT être appliqué de manière identique et cohérente sur TOUS les blocs de texte.
 `;
     } else {
         // Fallback to old behavior
         styleInstructions = `
-**2.1. UNIFIED STYLE DERIVATION:**
-    - The text's visual style (font, color, effects) MUST be derived **solely** from the provided background image to ensure it looks perfectly integrated.
-    - This **single, determined style** MUST be applied **identically and consistently across ALL text blocks**. The target format influences size and position ONLY, not the style itself.
+**2.1. DÉRIVATION DE STYLE UNIFIÉE :**
+- Le style visuel du texte (police, couleur, effets) DOIT être dérivé **uniquement** de l'image de fond fournie pour garantir une intégration parfaite.
+- Ce **style unique et déterminé** DOIT être appliqué de manière **identique et cohérente sur TOUS les blocs de texte**. Le format cible influence UNIQUEMENT la taille et la position, pas le style.
 `;
     }
 
     return `
-You are a master graphic designer AI, an expert in visual composition and typography for high-impact esports event visuals.
-Your task is to add the provided text content to the given background image, following an extremely strict set of rules. Failure to follow any rule is a failure of the entire task.
+# MANDAT CRÉATIF : SUPERPOSITION DE TEXTE
 
-**Provided Background Image:** [The input image]
-**Target Format:** ${formatMapping[format]}
+Tu es une IA maître graphiste, experte en composition visuelle et en typographie pour des visuels d'événements e-sport à fort impact.
+Ta tâche est d'ajouter le contenu textuel fourni à l'image de fond, en suivant un ensemble de règles extrêmement strictes.
 
-**Text Content to Add:**
+---
+
+## 1. INFORMATIONS DE BASE
+
+- **Image de fond fournie :** [L'image d'entrée]
+- **Format cible :** ${formatMapping[format]}
+- **Contenu textuel à ajouter :**
 ${textContent}
 
-**--- THE UNBREAKABLE RULEBOOK ---**
+---
 
-**RULE 1: GEOMETRY AND PLACEMENT (ABSOLUTE PRIORITY)**
+## 2. RÈGLEMENT INCONTOURNABLE
 
-1.1. **THE 10% SAFE AREA:**
-    - You MUST define a "safe area" that is inset by **10% from ALL four edges** of the image. The usable space for text is the central 80% of the canvas.
-    - **EVERY part of every text element**—including letters, glows, shadows, or outlines—MUST be placed **ENTIRELY inside this safe area**.
-    - **NO element is permitted to touch or cross the safe area boundary.** This is the most critical instruction.
+### RÈGLE 1 : GÉOMÉTRIE ET PLACEMENT (PRIORITÉ ABSOLUE)
 
-1.2. **PROPORTIONAL FONT SIZING:**
-    - Font sizes MUST be calculated **proportionally to the image's height**. Do not use fixed pixel sizes.
-    - As a guideline: The main title's font size should be approximately 7-10% of the total image height. Other text elements must be scaled down from there according to the visual hierarchy.
-    - This ensures text is readable and well-proportioned on all formats, from wide banners to tall stories.
+**1.1. ZONE DE SÉCURITÉ DE 10% :**
+- Tu DOIS définir une "zone de sécurité" avec une marge de **10% sur les QUATRE bords**. L'espace utilisable pour le texte est le 80% central de la toile.
+- **CHAQUE partie de chaque élément de texte** (lettres, lueurs, ombres) DOIT être placée **ENTIÈREMENT à l'intérieur de cette zone**.
+- **AUCUN élément ne doit toucher ou franchir la limite de la zone de sécurité.** C'est l'instruction la plus critique.
 
-1.3. **NO CROPPING:**
-    - It is absolutely forbidden for any part of any letter to be cropped or cut off by the image edges. Every character must be 100% visible.
+**1.2. TAILLE DE POLICE PROPORTIONNELLE :**
+- Les tailles de police DOIVENT être calculées **proportionnellement à la hauteur de l'image**. Pas de tailles en pixels fixes.
+- Le titre principal devrait faire environ 7-10% de la hauteur de l'image. Les autres textes doivent être mis à l'échelle à partir de là.
 
-1.4. **DYNAMIC COMPOSITION:**
-    - The layout (top, center, bottom alignment of text blocks) MUST be dynamically calculated to create a balanced, professional, and aesthetically pleasing composition for the specific format.
-    - The composition MUST adapt intelligently if some text blocks are missing. For example, if there is only a title and a date, position them harmoniously, not leaving a large awkward gap for a missing baseline.
-    - Avoid placing text directly over the most critical part of the background's main subject (e.g., a character's face).
+**1.3. PAS DE RECADRAGE :**
+- Il est absolument interdit qu'une partie d'une lettre soit coupée par les bords de l'image.
 
-**RULE 2: STYLE AND VISUAL CONSISTENCY (NON-NEGOTIABLE)**
+**1.4. COMPOSITION DYNAMIQUE :**
+- La mise en page (alignement haut, centre, bas) DOIT être calculée dynamiquement pour une composition équilibrée et professionnelle pour le format spécifique.
+- Évite de placer du texte sur les parties les plus critiques du sujet de fond (par ex., un visage).
+
+### RÈGLE 2 : STYLE ET COHÉRENCE VISUELLE (NON NÉGOCIABLE)
+
 ${styleInstructions}
-**2.2. FONT & TYPOGRAPHY:**
-    - The font MUST be a **modern, bold, sans-serif typeface** suitable for esports (e.g., impactful, clean, highly legible).
-    - Line spacing and letter spacing must be professional, consistent, and enhance readability.
 
-**2.3. COLOR & EFFECTS:**
-    - The primary text color MUST be a bright, high-contrast color.
-    - Use subtle effects ONLY to guarantee readability (e.g., a soft outer glow or a tight, dark drop shadow). The style should be premium and clean, not cheap or over-designed.
+**2.2. POLICE & TYPOGRAPHIE :**
+- La police DOIT être une **police sans-serif moderne, grasse** adaptée à l'e-sport (percutante, propre, très lisible).
+- L'interlignage et l'espacement doivent être professionnels.
 
-**2.4. VISUAL HIERARCHY:**
-    - "Event Name" is the primary title and MUST be the largest and most visually dominant text.
-    - "Baseline" is a subtitle and must be clearly secondary to the title.
-    - "Location" and "Date" are tertiary information, should be the smallest, and are often grouped together.
+**2.3. COULEUR & EFFETS :**
+- La couleur du texte DOIT être vive et très contrastée.
+- Utilise des effets subtils UNIQUEMENT pour garantir la lisibilité (par ex., une douce lueur externe ou une ombre portée nette et sombre).
 
-**RULE 3: CONTENT FIDELITY**
+**2.4. HIÉRARCHIE VISUELLE :**
+- "Nom de l'événement" est le titre principal et DOIT être le plus grand.
+- "Slogan" est un sous-titre, clairement secondaire.
+- "Lieu" et "Date" sont des informations tertiaires, les plus petites.
 
-3.1. **EXACT WORDING:**
-    - You MUST reproduce the provided text content character-for-character. No additions, omissions, or paraphrasing.
+### RÈGLE 3 : FIDÉLITÉ DU CONTENU
 
-**FINAL CHECK:** Before outputting the image, perform a self-correction pass. Verify: Is every single rule in this rulebook followed? Is the text entirely within the 10% safe area? Is the sizing proportional? Is the style consistent as defined in RULE 2? Is the content exact? If not, regenerate the text overlay until it is perfect.
+**3.1. TEXTE EXACT :**
+- Tu DOIS reproduire le contenu textuel fourni caractère par caractère. Aucune addition, omission ou paraphrase.
 
-Return only the final image with the perfectly integrated text.
+---
+
+## 3. VÉRIFICATION FINALE
+
+Avant de générer l'image, effectue une auto-correction. Vérifie : Chaque règle est-elle respectée ? Le texte est-il entièrement dans la zone de sécurité ? La taille est-elle proportionnelle ? Le style est-il cohérent ? Le contenu est-il exact ? Si non, régénère jusqu'à la perfection.
+
+Retourne uniquement l'image finale avec le texte parfaitement intégré.
 `;
 };
 
 
 export const generateEsportPrompt = (options: EsportPromptOptions, allPresets: UniversePreset[], isAdaptation: boolean = false): string => {
-    
+    const isFrench = options.language === 'français';
+
     // Universe Composition Logic
     let activePresets: UniversePreset[] = [];
     if (options.universes.length > 0) {
@@ -155,388 +167,208 @@ export const generateEsportPrompt = (options: EsportPromptOptions, allPresets: U
     if (activePresets.length > 0) {
         if (activePresets.length === 1) {
             const p = activePresets[0];
-            // The composition prompt focuses on non-style "flavor" to avoid conflicts with user's manual selections.
-            compositionPrompt = `The visual is inspired by the "${p.label}" universe. Thematic direction from keywords: ${p.keywords.join(', ')}. Suggested color palette: ${p.colorPalette.join(', ')}. The user's specific style choices below are the primary instructions.`;
+            const inspirationText = isFrench ? `Le visuel est inspiré de l'univers "${p.label}".` : `The visual is inspired by the "${p.label}" universe.`;
+            const thematicDirectionText = isFrench ? `Direction thématique à partir des mots-clés :` : `Thematic direction from keywords:`;
+            const suggestedPaletteText = isFrench ? `Palette de couleurs suggérée :` : `Suggested color palette:`;
+            const userChoicesText = isFrench ? `Les choix de style spécifiques de l'utilisateur ci-dessous sont les instructions principales.` : `The user's specific style choices below are the primary instructions.`;
+            compositionPrompt = `${inspirationText} ${thematicDirectionText} ${p.keywords.join(', ')}. ${suggestedPaletteText} ${p.colorPalette.join(', ')}. ${userChoicesText}`;
         } else {
-            compositionPrompt = "The visual is a fusion of multiple universes:\n";
+            compositionPrompt = isFrench ? "Le visuel est une fusion de plusieurs univers :\n" : "The visual is a fusion of multiple universes:\n";
             activePresets.forEach(p => {
-                compositionPrompt += `- **${p.label} (Weight: ${Math.round(p.influenceWeight * 100)}%)**: ${p.description}. Keywords: ${p.keywords.join(', ')}. Colors: ${p.colorPalette.join(', ')}.\n`;
+                const weightText = isFrench ? `Poids` : `Weight`;
+                const keywordsText = isFrench ? `Mots-clés` : `Keywords`;
+                const colorsText = isFrench ? `Couleurs` : `Colors`;
+                compositionPrompt += `- **${p.label} (${weightText}: ${Math.round(p.influenceWeight * 100)}%)**: ${p.description}. ${keywordsText}: ${p.keywords.join(', ')}. ${colorsText}: ${p.colorPalette.join(', ')}.\n`;
             });
-            compositionPrompt += "Create a harmonious and epic blend of these styles.";
+            compositionPrompt += isFrench ? "Crée un mélange harmonieux et épique de ces styles." : "Create a harmonious and epic blend of these styles.";
         }
     }
 
-    // The specific style options always come from the main `options` object,
-    // which reflects the user's current selections in the UI. This is the source of truth.
+    // The specific style options always come from the main `options` object.
     const gameType = options.gameType;
     const graphicStyle = options.graphicStyle;
     const ambiance = options.ambiance;
     const visualElements = options.visualElements;
 
-    // NEW: Detailed instructions based on the selected key visual element and its size.
+    // REFACTORED: Visual Element and Sizing Logic
     let visualElementsInstructions = "";
     const isSizedElement = visualElements === "Personnage central" ||
                            visualElements === "Duo de joueurs" ||
                            visualElements === "Logo ou trophée";
 
-    switch (visualElements) {
-        case "Personnage central":
-        case "Duo de joueurs":
-            visualElementsInstructions = `${visualElements}. The character(s) MUST be the main subject, prominently featured.`;
-            if (isSizedElement && typeof options.elementSize === 'number') {
-                if (options.elementSize === 0) {
-                    visualElementsInstructions = `Immersive background without a subject. CRITICAL: The image must be a pure background scene. It must NOT contain any humans, humanoids, characters, creatures, or distinct faces. The focus is entirely on the environment, atmosphere, and abstract elements. This is because the element size is set to 0%.`;
-                } else {
-                    visualElementsInstructions += `
-NON-NEGOTIABLE COMPOSITION RULE: The height of the main subject (the character(s)) MUST be EXACTLY ${options.elementSize}% of the total image height. This is the single most important compositional constraint. The camera angle and shot (e.g., close-up, full body shot) MUST be chosen to strictly enforce this percentage.
-- Example: At 10%, the character should be a small figure in the scene (full body shot from a distance).
-- Example: At 90%, the character should be an extreme close-up, filling almost the entire vertical space.
-- Example: At 100%, the visual should be an extreme close-up on a texture or detail of the character (e.g., an eye, or a piece of armor), filling the entire frame and becoming almost abstract.
-Do not deviate from this percentage. This instruction is not a suggestion. Failure to adhere to this percentage is a critical failure of the task.`;
-                }
-            } else {
-                // Fallback for older history items or default behavior
-                visualElementsInstructions += ` They must occupy at least three-quarters (3/4) of the visual's height.`;
-            }
-            break;
-        case "Logo ou trophée":
-            visualElementsInstructions = `The central focus is a majestic logo or trophy, integrated into the scene. The image should not contain any human or humanoid characters.`;
-            if (isSizedElement && typeof options.elementSize === 'number') {
-                if (options.elementSize === 0) {
-                    visualElementsInstructions = `Immersive background without a subject. CRITICAL: The image must be a pure background scene. It must NOT contain any humans, humanoids, characters, creatures, or distinct faces. The focus is entirely on the environment, atmosphere, and abstract elements. This is because the element size is set to 0%.`;
-                } else {
-                    visualElementsInstructions += `
-NON-NEGOTIABLE COMPOSITION RULE: The height of the main subject (the logo/trophy) MUST be EXACTLY ${options.elementSize}% of the total image height. This is the single most important compositional constraint. The camera angle and perspective MUST be chosen to strictly enforce this percentage.
-- Example: At 10%, the logo/trophy should be small and subtle within the larger scene.
-- Example: At 90%, the logo/trophy should be massive and dominate the visual, seen from a low angle.
-- Example: At 100%, the visual should be an extreme close-up on a texture or detail of the logo/trophy, filling the entire frame and becoming almost abstract.
-Do not deviate from this percentage. This instruction is not a suggestion. Failure to adhere to this percentage is a critical failure of the task.`;
-                }
-            }
-            break;
-        case "Fond immersif":
-            visualElementsInstructions = `Immersive background without a subject. CRITICAL: The image must be a pure background scene. It must NOT contain any humans, humanoids, characters, creatures, or distinct faces. The focus is entirely on the environment, atmosphere, and abstract elements.`;
-            break;
-        default:
-            visualElementsInstructions = visualElements;
-    }
-
-
-    // Determine if text will be added later
-    const hasTextContent = !!(options.eventName.trim() || options.baseline.trim() || options.eventLocation.trim() || options.eventDate.trim());
-    const shouldHaveTextInFinalImage = !options.hideText && hasTextContent;
-
-    let textInstructions = "";
-    if (shouldHaveTextInFinalImage) {
-        textInstructions = `
-IMPORTANT: Generate ONLY the background visual for an event poster. DO NOT add any text, letters, or numbers.
-However, you MUST compose the image to leave appropriate, clear, and visually balanced space for text that will be added later.
-The text content will be:
-- Event Name: "${options.eventName}"
-- Baseline: "${options.baseline}"
-- Location: "${options.eventLocation}"
-- Date: "${options.eventDate}"
-Your composition should anticipate this text and provide a natural place for it.
-`;
+    // Step 1: Get the base description (custom text > preset)
+    if (options.visualElementDescriptions && options.visualElementDescriptions.length > 0) {
+        const descriptionText = options.visualElementDescriptions.join(' et ');
+        visualElementsInstructions = isFrench 
+            ? `Description de l'élément principal : ${descriptionText}. Cette instruction a priorité.`
+            : `Main element description: ${descriptionText}. This instruction has priority.`;
     } else {
-        textInstructions = "The image must NOT contain any text, letters, or numbers. It should be a pure background visual.";
+        switch (visualElements) {
+            case "Personnage central":
+                visualElementsInstructions = isFrench ? `Un personnage central.` : `A central character.`;
+                break;
+            case "Duo de joueurs":
+                visualElementsInstructions = isFrench ? `Un duo de joueurs.` : `A duo of players.`;
+                break;
+            case "Logo ou trophée":
+                visualElementsInstructions = isFrench ? `Un logo ou trophée majestueux. L'image ne doit contenir aucun personnage.` : `A majestic logo or trophy. The image must not contain any characters.`;
+                break;
+            case "Fond immersif":
+                visualElementsInstructions = isFrench
+                    ? `Fond immersif sans sujet. IMPORTANT : L'image doit être une pure scène de fond. Elle ne devrait contenir aucun humain, humanoïde, personnage, créature ou visage distinct.`
+                    : `Immersive background without a subject. IMPORTANT: The image should be a pure background scene. It should NOT contain any humans, humanoids, characters, creatures, or distinct faces.`;
+                break;
+            default:
+                visualElementsInstructions = visualElements;
+        }
     }
 
-
-    let partnerZoneInstructions = "";
-    if (options.reservePartnerZone) {
-        partnerZoneInstructions = `
-A dedicated, clean, and unobtrusive zone for partner logos must be reserved at the ${options.partnerZonePosition} of the image. This zone must occupy approximately ${options.partnerZoneHeight}% of the total image height. The area should be visually distinct but integrated, perhaps using a subtle gradient or a semi-transparent overlay that complements the main artwork. Do not place any logos in it, just reserve the space.
-`;
+    // Step 2: Append sizing rules if applicable. This overrides the description if size is 0.
+    if (isSizedElement && typeof options.elementSize === 'number') {
+        if (options.elementSize === 0) {
+            visualElementsInstructions = isFrench
+                ? `Fond immersif sans sujet. IMPORTANT : L'image doit être une pure scène de fond. Elle ne devrait contenir aucun humain, humanoïde, personnage, créature ou visage distinct. L'accent est entièrement mis sur l'environnement, l'atmosphère et les éléments abstraits. Ceci est dû au fait que la taille de l'élément est réglée sur 0%.`
+                : `Immersive background without a subject. IMPORTANT: The image should be a pure background scene. It should NOT contain any humans, humanoids, characters, creatures, or distinct faces. The focus is entirely on the environment, atmosphere, and abstract elements. This is because the element size is set to 0%.`;
+        } else {
+            visualElementsInstructions += (isFrench ? `
+INSTRUCTION DE COMPOSITION IMPORTANTE : La hauteur du sujet principal (décrit ci-dessus) devrait occuper environ ${options.elementSize}% de la hauteur totale de l'image. C'est une directive clé pour la composition. L'angle de la caméra et le plan (par ex., gros plan, plan d'ensemble) doivent être choisis pour s'approcher de ce pourcentage.
+- Exemple : À 10%, le sujet est une petite silhouette dans la scène (plan d'ensemble).
+- Exemple : À 90%, le sujet est en très gros plan, remplissant presque tout l'espace vertical.
+- Exemple : À 100%, le visuel est un très gros plan sur une texture ou un détail du sujet (par ex., un œil, une pièce d'armure), remplissant tout le cadre et devenant presque abstrait.
+Essaie de respecter cette directive pour un résultat optimal.`
+            : `
+IMPORTANT COMPOSITION INSTRUCTION: The height of the main subject (described above) should be approximately ${options.elementSize}% of the total image height. This is a key compositional guideline. The camera angle and shot (e.g., close-up, full body shot) should be chosen to approach this percentage.
+- Example: At 10%, the subject is a small figure in the scene (full body shot from a distance).
+- Example: At 90%, the subject is an extreme close-up, filling almost the entire vertical space.
+- Example: At 100%, the visual is an extreme close-up on a texture or detail of the subject (e.g., an eye, or a piece of armor), filling the entire frame and becoming almost abstract.
+Try to follow this guideline for an optimal result.`);
+        }
+    } else if (visualElements === "Fond immersif") {
+        // Re-ensure this critical instruction is not lost if the element size is not 0
+        visualElementsInstructions = isFrench
+            ? `Fond immersif sans sujet. IMPORTANT : L'image doit être une pure scène de fond. Elle ne devrait contenir aucun humain, humanoïde, personnage, créature ou visage distinct.`
+            : `Immersive background without a subject. IMPORTANT: The image should be a pure background scene. It should NOT contain any humans, humanoids, characters, creatures, or distinct faces.`;
     }
+
 
     const formatMapping: Record<Format, string> = {
-        "A3 / A2 (Vertical)": "portrait (2:3 aspect ratio)",
-        "4:5 (Vertical)": "portrait (4:5 aspect ratio)",
-        "1:1 (Carré)": "square (1:1 aspect ratio)",
-        "16:9 (Paysage)": "landscape (16:9 aspect ratio)",
-        "9:16 (Story)": "tall portrait (9:16 aspect ratio)",
-        "3:1 (Bannière)": "wide landscape banner (3:1 aspect ratio)",
+        "A3 / A2 (Vertical)": isFrench ? "portrait (ratio 2:3)" : "portrait (2:3 aspect ratio)",
+        "4:5 (Vertical)": isFrench ? "portrait (ratio 4:5)" : "portrait (4:5 aspect ratio)",
+        "1:1 (Carré)": isFrench ? "carré (ratio 1:1)" : "square (1:1 aspect ratio)",
+        "16:9 (Paysage)": isFrench ? "paysage (ratio 16:9)" : "landscape (16:9 aspect ratio)",
+        "9:16 (Story)": isFrench ? "portrait haut (ratio 9:16)" : "tall portrait (9:16 aspect ratio)",
+        "3:1 (Bannière)": isFrench ? "bannière paysage large (ratio 3:1)" : "wide landscape banner (3:1 aspect ratio)",
     };
 
-    let basePrompt = `
-Create a visually stunning, ultra-high-quality esports event poster background. The style should be modern, dynamic, and professional.
+    const textPresence = (options.eventName || options.baseline || options.eventLocation || options.eventDate) && !options.hideText;
 
-**Core Theme & Style (Primary Instructions):**
-- **Composition:** The main subject MUST be centered to avoid being cropped when adapting to other formats.
-- **Game Genre:** ${gameType}.
-- **Dominant Graphic Style:** ${graphicStyle}.
-- **Visual Ambiance:** ${ambiance || 'Decided by the AI to best fit the theme'}.
-- **Key Visual Elements:** ${visualElementsInstructions}.
-- **Special Effects Intensity:** ${options.effectsIntensity}%. Expect energetic elements like particles, glows, light streaks, and lens flares, balanced according to this intensity.
+    const resolution = options.highResolution ? (isFrench ? "Haute définition (qualité supérieure)" : "High definition (superior quality)") : (isFrench ? "Définition standard" : "Standard definition");
 
-**Thematic Inspiration (Secondary Instructions):**
+    let textInstructions = "";
+    if (isAdaptation) {
+        textInstructions = isFrench
+            ? "Le visuel généré est une base SANS TEXTE. Il sera ajouté dans une étape ultérieure. Il est donc CRUCIAL de ne PAS générer de texte, de lettres, de symboles ou de logos lisibles. Des formes abstraites inspirées de la typographie sont autorisées si elles sont purement décoratives."
+            : "The generated visual is a TEXT-FREE base. Text will be added in a later step. It is therefore CRUCIAL NOT to generate any readable text, letters, symbols, or logos. Abstract shapes inspired by typography are allowed if purely decorative.";
+    } else {
+        textInstructions = textPresence
+            ? (isFrench
+                ? "Ce visuel inclura du texte qui sera ajouté ultérieurement. IMPORTANT : Ne génère AUCUN texte, lettre ou symbole lisible. Des formes abstraites sont acceptables. Assure-toi de laisser des zones visuellement plus calmes pour permettre une superposition de texte lisible."
+                : "This visual will include text to be added later. IMPORTANT: Do NOT generate ANY readable text, letters, or symbols. Abstract shapes are acceptable. Make sure to leave visually calmer areas to allow for readable text overlay.")
+            : (isFrench
+                ? "Ce visuel ne contiendra PAS de texte. Concentre-toi sur une composition pleine et percutante, sans avoir besoin de réserver de l'espace pour du texte."
+                : "This visual will NOT contain text. Focus on a full and impactful composition, without needing to reserve space for text.");
+    }
+    
+    const transparentBgInstruction = options.transparentBackground
+        ? (isFrench
+            ? "INSTRUCTION IMPORTANTE : FOND TRANSPARENT. Le sujet principal décrit doit être complètement isolé. L'arrière-plan de l'image doit être entièrement transparent (canal alpha). Il ne doit y avoir aucun élément de décor, couleur de fond, dégradé ou texture. Seul le sujet est visible. Le résultat attendu est un fichier PNG avec une transparence alpha effective."
+            : "IMPORTANT INSTRUCTION: TRANSPARENT BACKGROUND. The described main subject should be completely isolated. The image background must be fully transparent (alpha channel). There should be no background scenery, colors, gradients, or textures. Only the subject is visible. The expected output is a PNG file with effective alpha transparency.")
+        : "";
+
+    let bannerInstruction = "";
+    if (options.format === "3:1 (Bannière)" && options.visualElements !== "Fond immersif") {
+        bannerInstruction = isFrench 
+            ? `\n- **GUIDE POUR FORMAT BANNIÈRE (3:1) :** Ce format est très large, la composition est donc essentielle.
+- **COMPOSITION CENTRÉE RECOMMANDÉE :** Le sujet principal (personnage, logo, etc.) devrait être **centré horizontalement** pour un impact maximal.
+- **CADRAGE VERTICAL :** Le format étant peu haut, un cadrage vertical est attendu. La priorité est de conserver les parties importantes du sujet.
+    - **Pour un personnage :** Vise un "plan poitrine" ou "plan taille" (medium shot) où la tête et le torse sont bien visibles. Il est normal de couper le personnage au niveau des jambes.
+    - **Pour un objet/logo :** Assure-toi que la partie centrale et reconnaissable est visible.
+- **ÉVITEMENT DE COUPURE LATERALE :** Évite de couper le sujet sur les côtés gauche ou droit pour maintenir un bon équilibre visuel.
+- **RÉSUMÉ :** Pense à un plan cinématographique large où le héros est au centre, avec l'environnement qui s'étend sur les côtés.`
+            : `\n- **GUIDE FOR BANNER FORMAT (3:1):** This format is very wide, so composition is key.
+- **CENTERED COMPOSITION RECOMMENDED:** The main subject (character, logo, etc.) should be **horizontally centered** for maximum impact.
+- **VERTICAL FRAMING:** Due to the limited height, vertical framing is expected. The priority is to preserve the important parts of the subject.
+    - **For a character:** Aim for a "bust shot" or a "medium shot" where the head and torso are clearly visible. It's normal to crop the character at the legs.
+    - **For an object/logo:** Ensure the central and most recognizable part is visible.
+- **AVOID LATERAL CROPPING:** Try not to crop the subject on the left or right sides to maintain a balanced visual.
+- **SUMMARY:** Think of a wide cinematic shot where the hero is in the center, with the environment extending to the sides.`;
+    }
+
+    const finalPrompt = `
+# MANDAT CRÉATIF : VISUEL D'AFFICHE E-SPORT
+
+**Langue de sortie pour les descriptions :** ${options.language}
+
+## 1. COMPOSITION DE L'UNIVERS (Fusion & Inspiration)
 ${compositionPrompt}
 
-**Text & Layout:**
-${textInstructions}
-${partnerZoneInstructions}
+## 2. INSTRUCTIONS DE STYLE (Choix utilisateur - Priorité absolue)
+- **Type de jeu :** ${gameType}
+- **Style graphique dominant :** ${graphicStyle}
+- **Ambiance visuelle / Éclairage :** ${ambiance || (isFrench ? "Automatique (décidé par l'IA)" : "Automatic (AI decides)")}
+- **Intensité des effets spéciaux (lumières, particules, magie) :** ${options.effectsIntensity}%
 
-**CRITICAL QUALITY INSTRUCTIONS:**
-1.  **NO MARGINS / FULL BLEED:** This is a critical failure point. The generated image content MUST extend to the absolute edges of the canvas. There should be ZERO margins, borders, or padding of any color (white, black, or otherwise). The design must be "full bleed".
-2.  **Professional Quality:** The image must be sharp, detailed, and look like it was made by a professional graphic designer for a major esports event. No artifacts, strange anatomy, or distorted elements.
+## 3. ÉLÉMENT VISUEL PRINCIPAL & COMPOSITION
+${visualElementsInstructions}
+
+## 4. FORMAT & SPÉCIFICATIONS TECHNIQUES
+- **Format :** ${formatMapping[options.format]}${bannerInstruction}
+- **Résolution :** ${resolution}
+- **Présence de texte (sur l'image finale) :** ${textPresence ? 'Oui' : 'Non'}
+- **Instruction sur le texte pour CETTE génération :** ${textInstructions}
+- ${transparentBgInstruction}
+
+## 5. DIRECTIVES FINALES
+- Le visuel doit être percutant, professionnel et adapté à une communication e-sport de haut niveau.
+- Éviter les visages trop détaillés ou reconnaissables, sauf si explicitement demandé. L'accent est mis sur l'action et l'ambiance.
+- Assure une composition équilibrée qui attire le regard.
+
+Génère une seule image en suivant ces directives à la lettre.
 `;
-
-    if (isAdaptation) {
-        basePrompt = `
-You are an AI specializing in intelligent image outpainting and scene extension. Your mission is to adapt a provided square, master image to a new aspect ratio, preserving its core subject while seamlessly extending the background.
-
-**PRIMARY DIRECTIVE: PRESERVE THE MASTER IMAGE**
-- The original square image provided is the 'zone of interest'. It MUST remain at the center of the new composition.
-- The content of this master image must NOT be altered, cropped, scaled, or distorted in any way.
-
-**TASK: INTELLIGENT SCENE EXTENSION**
-- Your goal is to generate new visual information ONLY in the areas outside the original square image to fill the target aspect ratio of **${formatMapping[options.format]}**.
-- **Coherent Generation:** The new background must be a logical and visually consistent extension of the original scene. Analyze the textures, lighting direction, color palette, and overall artistic style of the master image and continue them perfectly into the new areas. The transition must be INVISIBLE.
-- **Context:** The original image is an esports visual. Its context is: Game Genre: ${gameType}, Style: ${graphicStyle}, Ambiance: ${ambiance}. The extended scene must match this context.
-
-**STRICT PROHIBITIONS (DO NOT DO THIS):**
-- **NO** stretching or duplicating existing pixels.
-- **NO** mirror effects or symmetrical padding. The extension must be newly generated content.
-- **NO** adding borders, frames, or solid color bars. The image must be full-bleed.
-- **NO** text should be added to the final image.
-
-The final output should be a single, high-quality, seamless image at the new aspect ratio, with the original master image perfectly preserved at its center.
-`;
-    }
 
     if (options.modificationRequest) {
-        basePrompt = `
-You are an expert AI image editor. Your task is to modify a base image according to a user's creative mandate. This is a non-negotiable, primary instruction.
-
-**USER'S CREATIVE MANDATE:** "${options.modificationRequest}"
-
-**CRITICAL EXECUTION STEPS:**
-1.  **Analyze and Correct:** First, silently analyze the user's mandate for any spelling or grammatical errors and correct them. The user's core intent is what matters.
-2.  **Execute Mandate:** Apply the corrected mandate with absolute precision. The changes must be significant, visible, and directly reflect the user's request.
-3.  **Preserve Style:** Maintain the overall art style, lighting, composition, and professional quality of the original image, unless the mandate explicitly asks to change it.
-4.  **Preserve Text (if any):** If the original image contained text, you MUST perfectly re-integrate the SAME text unless the mandate specifies text changes. Original text details: Event: "${options.eventName}", Baseline: "${options.baseline}", Location: "${options.eventLocation}", Date: "${options.eventDate}".
-5.  **Maintain Integrity:** Ensure the final image is full bleed (NO MARGINS) and maintains the original aspect ratio.
-
-Failure to precisely follow the user's mandate is a critical failure of the task.
-`;
+        return `${finalPrompt}\n\n## 6. REQUÊTE DE MODIFICATION UTILISATEUR (Priorité maximale)\nApplique cette modification à la génération précédente : "${options.modificationRequest}"`;
     }
 
-    return basePrompt;
+    return finalPrompt.trim();
 };
 
-// ==================================
-// QUALITY CHECKING FUNCTIONS
-// ==================================
-
-export const verifyTextFidelity = async (imageBase64: string, expectedText: string): Promise<boolean> => {
+export const correctText = async (text: string): Promise<string> => {
     try {
-        const ai = new GoogleGenAI({ apiKey: getApiKey() });
-        const imagePart = { inlineData: { mimeType: 'image/png', data: imageBase64 } };
-
-        if (!expectedText.trim()) {
-            // Case 1: No text is expected. Verify ABSENCE of text.
-            const textPart = {
-                text: `
-                Analyze the provided image. Your task is to determine if there is ANY text, letters, or numbers visible anywhere in the image.
-                Respond in JSON format according to this schema: {"hasText": boolean}.
-                - Set "hasText" to true if you find any readable text.
-                - Set "hasText" to false if the image is purely graphical and contains no text.
-                `
-            };
-            const schema = {
-                type: Type.OBJECT,
-                properties: { hasText: { type: Type.BOOLEAN, description: "True if any text is found." } },
-                required: ["hasText"]
-            };
-
-            const response = await ai.models.generateContent({
-                model: 'gemini-2.5-pro',
-                contents: { parts: [imagePart, textPart] },
-                config: {
-                    responseMimeType: "application/json",
-                    responseSchema: schema,
-                    temperature: 0,
-                },
-            });
-            const result = JSON.parse(response.text.trim());
-            console.log("Text Absence Verification:", { hasText: result.hasText });
-            return !result.hasText; // Return true if it has NO text.
-
-        } else {
-            // Case 2: Text is expected. Verify FIDELITY.
-            const textPart = {
-                text: `
-                Analyze the image and extract ALL visible text. Compare the extracted text with the "expected text" provided below.
-                
-                Expected Text: "${expectedText}"
-                
-                Your task is to determine if the text in the image is a perfect, character-for-character match with the expected text.
-                - Punctuation, capitalization, and spacing must be identical.
-                - The order must be the same.
-                - No words should be added or omitted.
-
-                Respond in JSON format according to the schema. The 'isPerfectMatch' property should be true only if the text is identical.
-                `
-            };
-            
-            const schema = {
-                type: Type.OBJECT,
-                properties: {
-                    isPerfectMatch: { 
-                        type: Type.BOOLEAN,
-                        description: "True if the text in the image is a perfect match, false otherwise."
-                    },
-                    extractedText: {
-                        type: Type.STRING,
-                        description: "The text you extracted from the image."
-                    }
-                },
-                required: ["isPerfectMatch", "extractedText"]
-            };
-
-            const response = await ai.models.generateContent({
-                model: 'gemini-2.5-pro',
-                contents: { parts: [imagePart, textPart] },
-                config: {
-                    responseMimeType: "application/json",
-                    responseSchema: schema,
-                    temperature: 0,
-                },
-            });
-
-            const result = JSON.parse(response.text.trim());
-            console.log("Text Fidelity Verification:", { expected: expectedText, extracted: result.extractedText, match: result.isPerfectMatch });
-            return result.isPerfectMatch;
-        }
-    } catch (error) {
-        handleApiError(error, 'verifyTextFidelity');
-    }
-};
-
-export const verifyNoMargins = async (imageBase64: string): Promise<boolean> => {
-    try {
-        const ai = new GoogleGenAI({ apiKey: getApiKey() });
-        
-        const imagePart = {
-            inlineData: { mimeType: 'image/png', data: imageBase64 },
-        };
-        const textPart = {
-            text: `
-            CRITICAL ANALYSIS TASK: IMAGE BORDER DETECTION.
-
-            You are a precision quality control tool. Your ONLY task is to determine if the provided image is "full bleed" (the content extends to all four edges) or if it has any margins or borders.
-            
-            **DEFINITIONS:**
-            - **Full Bleed / No Margins:** The artwork, colors, and textures of the image continue to the absolute edge of the canvas on all four sides (top, bottom, left, right). There is no padding or empty space.
-            - **Margins / Borders:** Any solid-colored or patterned band that is distinct from the main artwork and runs along one or more edges of the image. This includes white, black, or any other color of border. Even a 1-pixel wide border is considered a margin.
-            
-            **INSTRUCTIONS:**
-            1.  Scrutinize all four edges of the image.
-            2.  Compare the edge pixels to the adjacent artwork. Is there an abrupt, uniform line indicating a border?
-            3.  Respond ONLY with JSON according to the provided schema.
-            4.  Your analysis must be extremely accurate. A false negative (saying there are no margins when there are) is a critical failure.
-            
-            **JSON Schema:**
-            Respond with {"hasMargins": true} if you detect ANY border on ANY side.
-            Respond with {"hasMargins": false} ONLY if the artwork is perfectly full bleed.
-            `
-        };
-
-        const schema = {
-            type: Type.OBJECT,
-            properties: {
-                hasMargins: { 
-                    type: Type.BOOLEAN,
-                    description: "True if the image has solid-colored borders, false otherwise."
-                }
-            },
-            required: ["hasMargins"]
-        };
-
+        const ai = getAiClient();
         const response = await ai.models.generateContent({
-            model: 'gemini-2.5-pro',
-            contents: { parts: [imagePart, textPart] },
+            model: 'gemini-2.5-flash',
+            contents: `Corrige la grammaire, la ponctuation et la clarté de cette transcription vocale brute. Ne change pas le sens. Ne réponds qu'avec le texte corrigé, sans préambule.\n\nTexte brut: "${text}"\n\nTexte corrigé:`,
             config: {
-                responseMimeType: "application/json",
-                responseSchema: schema,
-                temperature: 0,
-            },
-        });
-
-        const result = JSON.parse(response.text.trim());
-        const hasMargins = result.hasMargins;
-
-        console.log("Margin Verification:", { hasMargins });
-
-        // The function should return true if there are NO margins.
-        return !hasMargins;
-
-    } catch (error) {
-        handleApiError(error, 'verifyNoMargins');
-    }
-};
-
-
-// ==================================
-// CORE IMAGE GENERATION FUNCTIONS
-// ==================================
-
-export const determineTextStyle = async (imageBase64: string): Promise<TextStyle> => {
-    try {
-        const ai = new GoogleGenAI({ apiKey: getApiKey() });
-        const imagePart = { inlineData: { mimeType: 'image/png', data: imageBase64 } };
-        
-        const prompt = `
-        You are an expert graphic designer AI. Analyze the provided image for an esports event.
-        Your task is to determine the optimal typography style for text overlays. The style must be modern, high-impact, and perfectly integrated with the image's art direction.
-
-        **Analysis:**
-        1.  **Font Family:** Suggest a bold, modern, sans-serif font family suitable for esports. Examples: 'Orbitron', 'Teko', 'Exo 2', 'Rajdhani'. Choose one that matches the image's theme (e.g., futuristic, fantasy, minimalist).
-        2.  **Color:** Sample colors from the image. Select a primary text color that is bright, energetic, and has the highest possible contrast and readability against the typical text placement areas (top and bottom thirds). Provide this as a hex code (e.g., "#FFFFFF").
-        3.  **Effect:** Describe a simple, clean, and professional text effect that enhances readability without being distracting. This should be a concise instruction. Examples: "A subtle white outer glow.", "A tight, dark drop shadow (offset 2px).", "A sharp, dark purple outline (2px width)."
-
-        Respond ONLY with a valid JSON object matching the schema. Do not include any markdown or extra text.
-        `;
-
-        const schema = {
-            type: Type.OBJECT,
-            properties: {
-                fontFamily: { type: Type.STRING, description: "Suggested font family name." },
-                color: { type: Type.STRING, description: "The hex color code for the text." },
-                effect: { type: Type.STRING, description: "A concise description of the text effect." }
-            },
-            required: ["fontFamily", "color", "effect"]
-        };
-
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.5-pro',
-            contents: { parts: [imagePart, { text: prompt }] },
-            config: {
-                responseMimeType: "application/json",
-                responseSchema: schema,
                 temperature: 0.2,
-            }
+            },
         });
-        return JSON.parse(response.text.trim());
-    } catch (error) {
-        handleApiError(error, 'determineTextStyle');
+        return response.text.trim();
+    } catch (e) {
+        return handleApiError(e, 'correctText');
     }
 };
 
 export const generateEsportImage = async (
     options: EsportPromptOptions, 
     allPresets: UniversePreset[],
-    promptOverride?: string
-): Promise<{ imageBase64: string; prompt: string; textVerified: boolean; marginsVerified: boolean }> => {
+    prompt: string
+): Promise<{ imageBase64: string; prompt: string; marginsVerified: boolean; textVerified: boolean }> => {
     try {
-        const ai = new GoogleGenAI({ apiKey: getApiKey() });
-        
-        const prompt = promptOverride || generateEsportPrompt(options, allPresets);
-        
-        const textPart = { text: prompt };
-        const parts: any[] = [textPart];
-        
+        const ai = getAiClient();
+
+        const parts: any[] = [{ text: prompt }];
+
         if (options.inspirationImage) {
             parts.unshift({
                 inlineData: {
@@ -545,7 +377,7 @@ export const generateEsportImage = async (
                 },
             });
         }
-
+        
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-flash-image',
             contents: { parts },
@@ -554,24 +386,72 @@ export const generateEsportImage = async (
             },
         });
 
-        const imagePart = response.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
-        if (!imagePart || !imagePart.inlineData) {
-            throw new Error("Aucune image n'a été générée par l'API.");
+        const candidate = response.candidates?.[0];
+        if (candidate?.content?.parts) {
+            for (const part of candidate.content.parts) {
+                if (part.inlineData?.data) {
+                    return {
+                        imageBase64: part.inlineData.data,
+                        prompt: prompt,
+                        marginsVerified: true,
+                        textVerified: true,
+                    };
+                }
+            }
         }
-        const imageBase64 = imagePart.inlineData.data;
-
-        // --- Quality Checks in Parallel ---
-        const expectedText = ""; // This function only generates the background, so no text is expected.
-
-        const [marginsVerified, textVerified] = await Promise.all([
-            verifyNoMargins(imageBase64),
-            verifyTextFidelity(imageBase64, expectedText),
-        ]);
         
-        return { imageBase64, prompt, textVerified, marginsVerified };
+        if (candidate?.finishReason && candidate.finishReason !== 'STOP') {
+            let reasonText = candidate.finishReason;
+            if (candidate.finishReason === 'SAFETY') {
+                reasonText = "contenu potentiellement sensible (SAFETY)";
+            } else if (candidate.finishReason === 'NO_IMAGE') {
+                reasonText = "le modèle n'a pas pu générer d'image pour cette demande";
+            }
+            throw new Error(`La génération a été bloquée : ${reasonText}. Essayez de modifier votre prompt.`);
+        }
+        
+        throw new Error("Aucune image n'a été générée par le modèle.");
+    } catch (e) {
+        return handleApiError(e, 'generateEsportImage');
+    }
+};
 
-    } catch (error) {
-        handleApiError(error, 'generateEsportImage');
+export const determineTextStyle = async (imageBase64: string): Promise<TextStyle> => {
+    try {
+        const ai = getAiClient();
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: {
+                parts: [
+                    {
+                        inlineData: {
+                            mimeType: 'image/png',
+                            data: imageBase64,
+                        },
+                    },
+                    {
+                        text: "Analyse cette image d'e-sport. Détermine le style de texte PARFAIT pour superposer des informations (nom du tournoi, etc.).\n\nRéponds UNIQUEMENT avec un objet JSON contenant : fontFamily (une police Google Fonts percutante et sans-serif), color (une couleur HEX vive et contrastée tirée de l'image), et effect (un effet de lisibilité subtil comme 'soft_glow', 'sharp_shadow' ou 'outline').\n\nExemple de réponse :\n{\"fontFamily\": \"Orbitron\", \"color\": \"#00FFFF\", \"effect\": \"soft_glow\"}"
+                    }
+                ]
+            },
+            config: {
+                responseMimeType: 'application/json',
+                responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                        fontFamily: { type: Type.STRING },
+                        color: { type: Type.STRING },
+                        effect: { type: Type.STRING },
+                    },
+                    required: ["fontFamily", "color", "effect"]
+                }
+            }
+        });
+        
+        const jsonText = response.text.trim();
+        return JSON.parse(jsonText);
+    } catch (e) {
+        return handleApiError(e, 'determineTextStyle');
     }
 };
 
@@ -583,172 +463,265 @@ export const addTextToImage = async (
     textStyle?: TextStyle
 ): Promise<{ imageBase64: string }> => {
     try {
-        const ai = new GoogleGenAI({ apiKey: getApiKey() });
-        
+        const ai = getAiClient();
         const prompt = generateTextOverlayPrompt(options, format, textStyle);
-        
-        const imagePart = { inlineData: { mimeType, data: imageBase64 } };
-        const textPart = { text: prompt };
-
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-flash-image',
-            contents: { parts: [imagePart, textPart] },
+            contents: {
+                parts: [
+                    {
+                        inlineData: {
+                            mimeType: mimeType,
+                            data: imageBase64
+                        }
+                    },
+                    {
+                        text: prompt
+                    }
+                ]
+            },
             config: {
                 responseModalities: [Modality.IMAGE],
             },
         });
 
-        const generatedImagePart = response.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
-        if (!generatedImagePart || !generatedImagePart.inlineData) {
-            throw new Error("Aucune image n'a été générée lors de l'ajout de texte.");
+        const candidate = response.candidates?.[0];
+        if (candidate?.content?.parts) {
+            for (const part of candidate.content.parts) {
+                if (part.inlineData?.data) {
+                    return { imageBase64: part.inlineData.data };
+                }
+            }
         }
-        const newImageBase64 = generatedImagePart.inlineData.data;
-        return { imageBase64: newImageBase64 };
-    } catch (error) {
-        handleApiError(error, 'addTextToImage');
+        
+        if (candidate?.finishReason && candidate.finishReason !== 'STOP') {
+            let reasonText = candidate.finishReason;
+            if (candidate.finishReason === 'SAFETY') {
+                reasonText = "contenu potentiellement sensible (SAFETY)";
+            } else if (candidate.finishReason === 'NO_IMAGE') {
+                reasonText = "le modèle n'a pas pu générer d'image pour cette demande";
+            }
+            throw new Error(`L'ajout de texte a été bloqué : ${reasonText}.`);
+        }
+        
+        throw new Error("L'ajout de texte a échoué car aucune image n'a été retournée.");
+    } catch (e) {
+        return handleApiError(e, 'addTextToImage');
     }
 };
 
 export const adaptEsportImage = async (
-    masterImageBase64: string,
-    masterImageMimeType: string,
+    imageBase64: string,
+    mimeType: string,
     options: EsportPromptOptions,
-    targetFormat: Format
+    format: Format,
+    cropArea?: CropArea
 ): Promise<{ imageBase64: string }> => {
     try {
-        const ai = new GoogleGenAI({ apiKey: getApiKey() });
-        
-        const adaptationOptions = { ...options, format: targetFormat };
-        const prompt = generateEsportPrompt(adaptationOptions, [], true);
+        const ai = getAiClient();
 
-        const imagePart = {
-            inlineData: {
-                mimeType: masterImageMimeType,
-                data: masterImageBase64,
-            },
+        const formatMapping: Record<Format, string> = {
+            "A3 / A2 (Vertical)": "portrait (2:3 aspect ratio)",
+            "4:5 (Vertical)": "portrait (4:5 aspect ratio)",
+            "1:1 (Carré)": "square (1:1 aspect ratio)",
+            "16:9 (Paysage)": "landscape (16:9 aspect ratio)",
+            "9:16 (Story)": "tall portrait (9:16 aspect ratio)",
+            "3:1 (Bannière)": "wide landscape banner (3:1 aspect ratio)",
         };
-        const textPart = { text: prompt };
+
+        let adaptationPrompt = `
+# MANDAT : ADAPTATION DE VISUEL E-SPORT
+Tu es une IA experte en graphisme et recomposition d'images. Ta mission est d'adapter l'image fournie à un nouveau format en préservant son style et son essence.
+
+## 1. IMAGE SOURCE
+[L'image d'entrée est fournie]
+
+## 2. STYLE ET CONTENU À PRÉSERVER
+Le style général (couleurs, textures, ambiance, sujet) de l'image source doit être conservé.
+
+## 3. NOUVEAU FORMAT CIBLE
+- **Format final :** ${formatMapping[format]}
+`;
+
+        if (format === '3:1 (Bannière)' && cropArea) {
+            const topPercent = Math.round(cropArea.y * 100);
+            const bottomPercent = Math.round((cropArea.y + 1/3) * 100);
+
+            adaptationPrompt += `
+## 4. INSTRUCTION DE RECADRAGE CRITIQUE (Priorité Absolue)
+- L'image source est un carré (1:1). Tu DOIS recadrer cette image source pour l'adapter au format bannière (3:1).
+- La zone à extraire de l'image source est une bande horizontale précise.
+- Le HAUT de cette zone d'intérêt commence à **${topPercent}%** du haut de l'image source.
+- Le BAS de cette zone d'intérêt se termine à **${bottomPercent}%** du haut de l'image source.
+- Concentre-toi EXCLUSIVEMENT sur le contenu visuel à l'intérieur de cette bande pour créer la nouvelle image. Les éléments en dehors de cette zone doivent être ignorés.
+- Ta mission est de prendre cette bande et de la transformer en une bannière 3:1 harmonieuse, en recomposant intelligemment les éléments si nécessaire pour remplir le format sans distorsion.
+`;
+        } else if (format === '16:9 (Paysage)' && cropArea) {
+            const cropHeight = 9/16;
+            const topPercent = Math.round(cropArea.y * 100);
+            const bottomPercent = Math.round((cropArea.y + cropHeight) * 100);
+
+            adaptationPrompt += `
+## 4. INSTRUCTION DE RECADRAGE CRITIQUE (Priorité Absolue)
+- L'image source est un carré (1:1). Tu DOIS recadrer cette image source pour l'adapter au format paysage (16:9).
+- La zone à extraire de l'image source est une bande horizontale précise avec un ratio de 16:9.
+- Le HAUT de cette zone d'intérêt commence à **${topPercent}%** du haut de l'image source.
+- Le BAS de cette zone d'intérêt se termine à **${bottomPercent}%** du haut de l'image source.
+- Concentre-toi EXCLUSIVEMENT sur le contenu visuel à l'intérieur de cette bande pour créer la nouvelle image. Les éléments en dehors de cette zone doivent être ignorés.
+- Ta mission est de prendre cette bande et de la transformer en une image 16:9 harmonieuse, en recomposant intelligemment les éléments si nécessaire pour remplir le format sans distorsion.
+`;
+        } else {
+             adaptationPrompt += `
+## 4. INSTRUCTION DE RECOMPOSITION
+Recompose intelligemment les éléments de l'image source pour les adapter parfaitement au nouveau format. Ne te contente pas de simplement recadrer ou étirer. Étends la scène, déplace des éléments si nécessaire pour créer une composition équilibrée et professionnelle dans le nouveau format.
+`;
+        }
+
+        adaptationPrompt += `
+## 5. RÈGLES FINALES
+- Ne génère AUCUN texte, lettre, ou logo.
+- Le résultat final doit être une image unique, propre, dans le format cible demandé.
+
+Retourne uniquement l'image adaptée.
+`;
 
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-flash-image',
-            contents: { parts: [imagePart, textPart] },
+            contents: {
+                parts: [
+                    { inlineData: { mimeType, data: imageBase64 } },
+                    { text: adaptationPrompt }
+                ]
+            },
             config: {
                 responseModalities: [Modality.IMAGE],
             },
         });
-
-        const generatedImagePart = response.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
-        if (!generatedImagePart || !generatedImagePart.inlineData) {
-            throw new Error("Aucune image n'a été générée pendant l'adaptation.");
-        }
-        const imageBase64 = generatedImagePart.inlineData.data;
-        return { imageBase64 };
-
-    } catch (error) {
-        handleApiError(error, `adaptEsportImage to ${targetFormat}`);
-    }
-};
-
-export const correctText = async (textToCorrect: string): Promise<string> => {
-    if (!textToCorrect.trim()) {
-        return "";
-    }
-    try {
-        const ai = new GoogleGenAI({ apiKey: getApiKey() });
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: `Correct the grammar, spelling, and syntax of the following French text. Preserve the original meaning. Return only the corrected text, without any introductory phrases like "Here is the corrected text:".
-
-Original text: "${textToCorrect}"
-
-Corrected text:`,
-            config: {
-                temperature: 0.1,
+        
+        const candidate = response.candidates?.[0];
+        if (candidate?.content?.parts) {
+            for (const part of candidate.content.parts) {
+                if (part.inlineData?.data) {
+                    return { imageBase64: part.inlineData.data };
+                }
             }
-        });
-        return response.text.trim();
-    } catch (error) {
-        handleApiError(error, 'correctText');
+        }
+        
+        if (candidate?.finishReason && candidate.finishReason !== 'STOP') {
+            let reasonText = candidate.finishReason;
+            if (candidate.finishReason === 'SAFETY') {
+                reasonText = "contenu potentiellement sensible (SAFETY)";
+            } else if (candidate.finishReason === 'NO_IMAGE') {
+                reasonText = "le modèle n'a pas pu générer d'image pour cette demande";
+            }
+            throw new Error(`L'adaptation a été bloquée : ${reasonText}.`);
+        }
+
+        throw new Error("L'adaptation de l'image a échoué car aucune image n'a été retournée.");
+    } catch (e) {
+        return handleApiError(e, 'adaptEsportImage');
     }
 };
 
 export const refinePrompt = async (currentPrompt: string, userFeedback: string): Promise<string> => {
     try {
-        const ai = new GoogleGenAI({ apiKey: getApiKey() });
-
+        const ai = getAiClient();
         const response = await ai.models.generateContent({
-            model: 'gemini-2.5-pro',
-            contents: `The user wants to refine an image generation prompt.
-            
-            **Current Prompt:**
-            \`\`\`
-            ${currentPrompt}
-            \`\`\`
-
-            **User's Request for Change:**
-            "${userFeedback}"
-
-            **Your Task:**
-            Rewrite the prompt to incorporate the user's feedback. Maintain the original structure and critical instructions (like "NO MARGINS"). Only change the parts relevant to the user's request. Output ONLY the complete, new, refined prompt and nothing else.
-            `,
+            model: 'gemini-2.5-flash',
+            contents: `Tu es un assistant expert en 'prompt engineering' pour la génération d'images. Améliore le prompt suivant en te basant sur la demande de l'utilisateur. Ne réponds qu'avec le prompt final, sans préambule.\n\nPrompt actuel:\n${currentPrompt}\n\nDemande utilisateur: "${userFeedback}"\n\nNouveau prompt:`,
             config: {
-                temperature: 0.2,
-            }
+                temperature: 0.5,
+            },
         });
-
         return response.text.trim();
-    } catch (error) {
-        handleApiError(error, 'refinePrompt');
+    } catch (e) {
+        return handleApiError(e, 'refinePrompt');
     }
 };
 
 export const suggestUniversePreset = async (theme: string): Promise<Omit<UniversePreset, 'id' | 'isCustom' | 'dominant'>> => {
     try {
-        const ai = new GoogleGenAI({ apiKey: getApiKey() });
-
-        const prompt = `
-        Based on the user's theme: "${theme}", generate a complete "Universe Preset" for an esports visual generator.
-        The response MUST be a valid JSON object matching the schema. Do not include any markdown or extra text.
-
-        **JSON Schema:**
-        - "label": (string) A catchy name for the universe (e.g., "Cosmic Gladiators").
-        - "description": (string) A short, evocative description of the universe's feel.
-        - "gameType": (string) One of: "${GAME_TYPES.map(g => g.value).join('", "')}".
-        - "style": (string) One of: "${GRAPHIC_STYLES.map(s => s.value).join('", "')}".
-        - "ambiance": (string) One of: "${AMBIANCES.map(a => a.value).join('", "')}".
-        - "elements": (string) One of: "${VISUAL_ELEMENTS.map(e => e.value).join('", "')}".
-        - "keywords": (array of strings) 5-7 thematic keywords.
-        - "colorPalette": (array of 4 strings) 4 hex color codes that define the palette.
-        - "influenceWeight": (number) A value between 0.4 and 0.8 representing its creative weight.
-        `;
-
-        const schema = {
-            type: Type.OBJECT,
-            properties: {
-                label: { type: Type.STRING },
-                description: { type: Type.STRING },
-                gameType: { type: Type.STRING },
-                style: { type: Type.STRING },
-                ambiance: { type: Type.STRING },
-                elements: { type: Type.STRING },
-                keywords: { type: Type.ARRAY, items: { type: Type.STRING } },
-                colorPalette: { type: Type.ARRAY, items: { type: Type.STRING } },
-                influenceWeight: { type: Type.NUMBER },
-            },
-            required: ["label", "description", "gameType", "style", "ambiance", "elements", "keywords", "colorPalette", "influenceWeight"]
-        };
-
+        const ai = getAiClient();
         const response = await ai.models.generateContent({
-            model: 'gemini-2.5-pro',
-            contents: prompt,
+            model: 'gemini-2.5-flash',
+            contents: `Génère un "préréglage d'univers" pour un visuel e-sport basé sur le thème : "${theme}".
+Crée un objet JSON avec les clés suivantes :
+- label (string): Un nom accrocheur.
+- description (string): Une brève description.
+- gameType (GameType): Choisis parmi ${GAME_TYPES.map(g => `"${g.value}"`).join(', ')}.
+- style (GraphicStyle): Choisis parmi ${GRAPHIC_STYLES.map(g => `"${g.value}"`).join(', ')}.
+- ambiance (Ambiance): Choisis parmi ${AMBIANCES.map(g => `"${g.value}"`).join(', ')}.
+- elements (VisualElements): Choisis parmi ${VISUAL_ELEMENTS.map(g => `"${g.value}"`).join(', ')}.
+- keywords (string[]): Une liste de 5-7 mots-clés thématiques.
+- colorPalette (string[]): Un tableau de 4 couleurs HEX qui correspondent au thème.
+- influenceWeight (number): Une valeur entre 0.5 et 0.7.
+
+Ne retourne que l'objet JSON, sans formatage de code markdown.`,
             config: {
                 responseMimeType: "application/json",
-                responseSchema: schema,
-                temperature: 0.7,
+                responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                        label: { type: Type.STRING },
+                        description: { type: Type.STRING },
+                        gameType: { type: Type.STRING, enum: GAME_TYPES.map(g => g.value) },
+                        style: { type: Type.STRING, enum: GRAPHIC_STYLES.map(s => s.value) },
+                        ambiance: { type: Type.STRING, enum: AMBIANCES.map(a => a.value).filter(Boolean) },
+                        elements: { type: Type.STRING, enum: VISUAL_ELEMENTS.map(v => v.value) },
+                        keywords: { type: Type.ARRAY, items: { type: Type.STRING } },
+                        colorPalette: { type: Type.ARRAY, items: { type: Type.STRING } },
+                        influenceWeight: { type: Type.NUMBER },
+                    },
+                    required: ["label", "description", "gameType", "style", "ambiance", "elements", "keywords", "colorPalette", "influenceWeight"],
+                }
             }
         });
-        return JSON.parse(response.text.trim());
-    } catch (error) {
-        handleApiError(error, 'suggestUniversePreset');
+        
+        const jsonText = response.text.trim();
+        return JSON.parse(jsonText);
+    } catch (e) {
+        return handleApiError(e, 'suggestUniversePreset');
+    }
+};
+
+export const refinePromptForModification = async (currentPrompt: string, modificationRequest: string): Promise<string> => {
+    try {
+        const ai = getAiClient();
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: `Tu es un assistant expert en 'prompt engineering'. Modifie le prompt d'image suivant pour intégrer la demande de l'utilisateur. Le nouveau prompt doit conserver l'esprit de l'original tout en appliquant les changements demandés. Ne réponds qu'avec le prompt final, sans préambule.\n\nPrompt original:\n${currentPrompt}\n\nDemande de modification: "${modificationRequest}"\n\nPrompt modifié:`,
+            config: {
+                temperature: 0.6,
+            }
+        });
+        return response.text.trim();
+    } catch (e) {
+        return handleApiError(e, 'refinePromptForModification');
+    }
+};
+
+export const summarizePromptChanges = async (originalPrompt: string, newPrompt: string, userRequest: string): Promise<PromptChangeSummary> => {
+    try {
+        const ai = getAiClient();
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: `Compare le prompt original et le nouveau prompt. Basé sur la demande utilisateur, identifie les éléments clés qui ont été conservés et ceux qui ont été modifiés/ajoutés. Sois concis.\n\nDemande: "${userRequest}"\n\nRéponds UNIQUEMENT avec un objet JSON contenant deux clés : "kept" (un tableau de chaînes décrivant ce qui est conservé) et "changed" (un tableau de chaînes décrivant ce qui a changé).\n\nOriginal: ${originalPrompt}\nNouveau: ${newPrompt}`,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                        kept: { type: Type.ARRAY, items: { type: Type.STRING } },
+                        changed: { type: Type.ARRAY, items: { type: Type.STRING } },
+                    },
+                    required: ["kept", "changed"],
+                }
+            }
+        });
+        
+        const jsonText = response.text.trim();
+        return JSON.parse(jsonText);
+    } catch (e) {
+        return handleApiError(e, 'summarizePromptChanges');
     }
 };
